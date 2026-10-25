@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ApplyPilot</title>
+  <link rel="stylesheet" href="sidepanel.css">
+</head>
+<body>
+  <header class="top">
+    <div class="brand"><img src="icons/icon32.png" alt="" width="24" height="24"> ApplyPilot</div>
+    <button id="settingsBtn" class="icon-btn" aria-label="Settings" title="Settings" aria-expanded="false">⚙</button>
+  </header>
+
+  <section id="settings" class="card" hidden aria-label="Settings">
+    <h2>Connect your account</h2>
+    <p class="muted">Get both values from Dashboard → Extension.</p>
+    <label class="field"><span>API URL</span><input id="api" type="url" placeholder="https://your-app.vercel.app" autocomplete="off"></label>
+    <label class="field"><span>API key</span><input id="key" type="password" placeholder="ap_…" autocomplete="off"></label>
+    <label class="field"><span>Resume PDF (auto-attached to upload fields)</span><input id="resume" type="file" accept="application/pdf"></label>
+    <p id="resumeName" class="muted small"></p>
+    <div class="row">
+      <button id="saveSettings" class="btn primary">Save</button>
+      <button id="openDash" class="btn">Open dashboard</button>
+    </div>
+    <div class="divider"></div>
+    <h3>Site access</h3>
+    <p class="muted small">ApplyPilot only reads a page when you click it. If Chrome blocks access on a site, allow it here once.</p>
+    <div class="row">
+      <button id="allowJobSites" class="btn">Allow on job boards</button>
+      <button id="allowAll" class="btn">Allow on all sites</button>
+    </div>
+    <p id="settingsMsg" class="msg" role="status" aria-live="polite"></p>
+  </section>
+
+  <nav class="tabs" role="tablist" aria-label="ApplyPilot">
+    <button role="tab" id="tab-job" aria-controls="panel-job" aria-selected="true">Job</button>
+    <button role="tab" id="tab-fill" aria-controls="panel-fill" aria-selected="false">Autofill</button>
+    <button role="tab" id="tab-answers" aria-controls="panel-answers" aria-selected="false">Answers</button>
+  </nav>
+
+  <main>
+    <section id="panel-job" role="tabpanel" aria-labelledby="tab-job">
+      <div id="jobCard" class="card">
+        <div class="row between"><span class="muted small" id="jobSource">Looking for a job on this page…</span><button id="detectBtn" class="btn sm">↻ Detect</button></div>
+        <div id="jobBody" hidden>
+          <div class="job-head">
+            <div class="ring" id="ring" role="meter" aria-label="ATS keyword match" aria-valuemin="0" aria-valuemax="100"><b id="ringVal">–</b></div>
+            <div class="job-meta">
+              <h2 id="jobTitle"></h2>
+              <p id="jobCompany" class="muted"></p>
+            </div>
+          </div>
+          <p class="small muted" id="scoreNote"></p>
+          <div id="chips" class="chips"></div>
+          <div class="stack">
+            <button id="saveJob" class="btn primary">☆ Save to tracker</button>
+            <button id="tailorJob" class="btn grad">⇄ Tailor resume</button>
+            <button id="coverJob" class="btn">✎ Cover letter</button>
+            <button id="fitJob" class="btn ghost">◎ AI fit analysis</button>
+          </div>
+          <div id="fitOut" hidden></div>
+          <div id="coverOut" hidden>
+            <label class="field"><span>Cover letter (editable)</span><textarea id="coverText" rows="12"></textarea></label>
+            <div class="row"><button id="copyCover" class="btn sm">Copy</button><span id="coverWords" class="muted small"></span></div>
+          </div>
+        </div>
+      </div>
+      <p id="jobMsg" class="msg" role="status" aria-live="polite"></p>
+    </section>
+
+    <section id="panel-fill" role="tabpanel" aria-labelledby="tab-fill" hidden>
+      <div class="card">
+        <h2>Fill this page</h2>
+        <p class="muted small">Fills what your profile can answer. <span class="dot g"></span>filled · <span class="dot o"></span>needs you · <span class="dot b"></span>you click it. ApplyPilot never clicks Submit.</p>
+        <button id="fillBtn" class="btn primary big">⚡ Fill this page</button>
+        <p class="muted small">Multi-step form? Click again on each step. It counts as one autofill.</p>
+      </div>
+      <div id="fillOut" class="card" hidden>
+        <p id="fillSummary"></p>
+        <div id="askList"></div>
+        <div class="stack">
+          <button id="saveAnswers" class="btn" hidden>★ Save my answers</button>
+          <button id="markApplied" class="btn ok">✓ I submitted it</button>
+        </div>
+      </div>
+      <p id="fillMsg" class="msg" role="status" aria-live="polite"></p>
+    </section>
+
+    <section id="panel-answers" role="tabpanel" aria-labelledby="tab-answers" hidden>
+      <div class="card">
+        <div class="row between"><h2>Quick copy</h2><button id="reloadAnswers" class="btn sm">↻</button></div>
+        <label class="field"><span class="sr-only">Search answers</span><input id="answerSearch" type="search" placeholder="Search answers…"></label>
+        <div id="answerList" class="answers"></div>
+      </div>
+      <p id="answersMsg" class="msg" role="status" aria-live="polite"></p>
+    </section>
+  </main>
+  <script src="sidepanel.js"></script>
+</body>
+</html>
