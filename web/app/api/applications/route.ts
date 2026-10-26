@@ -4,19 +4,36 @@ import { str, uuid, httpUrl } from "@/lib/server";
 export const dynamic = "force-dynamic";
 export const OPTIONS = preflight;
 
-const STATUSES = ["saved", "applied", "interview", "offer", "rejected"];
+const STATUSES = ["saved", "needs_review", "applied", "interview", "offer", "rejected"];
 const LEGACY: Record<string, string> = { filled: "saved", submitted: "applied" };
 
+// GET                -> all cards
+// GET ?queue=auto     -> Auto mode queue: "saved" cards that have an http(s) apply URL (job apply_url, else page_url)
 export const GET = handle(async (req) => {
   const { user, db } = await requireUser(req);
+  if (new URL(req.url).searchParams.get("queue") === "auto") {
+    const { data, error } = await db.from("applications")
+      .select("id, job_id, company, title, page_url, position, updated_at, jobs(apply_url)")
+      .eq("user_id", user.id).eq("status", "saved").order("position", { ascending: true }).order("updated_at", { ascending: false }).limit(200);
+    if (error) throw new HttpError(500, error.message);
+    const queue = (data || []).map((a: any) => {
+      const job = Array.isArray(a.jobs) ? a.jobs[0] : a.jobs;
+      const raw = (job && job.apply_url) || a.page_url || "";
+      let url = "";
+      try { const u = new URL(raw); if (u.protocol === "https:" || u.protocol === "http:") url = u.toString(); } catch { /* no usable URL */ }
+      return { id: a.id, job_id: a.job_id, company: a.company, title: a.title, url };
+    }).filter((a) => a.url);
+    return Response.json({ queue });
+  }
   const { data, error } = await db.from("applications")
-    .select("id, job_id, company, title, page_url, status, notes, follow_up, position, created_at, updated_at, applied_at, autofilled_at")
+    .select("id, job_id, company, title, page_url, status, source, notes, follow_up, position, created_at, updated_at, applied_at, autofilled_at")
     .eq("user_id", user.id).order("position", { ascending: true }).order("updated_at", { ascending: false }).limit(500);
   if (error) throw new HttpError(500, error.message);
   return Response.json({ applications: data || [] });
 });
 
-// POST { id, status?, notes?, follow_up?, position? } -> update a card
+// POST { id, status?, notes?, follow_up?, position?, auto_note? } -> update a card
+//   auto_note: a short reason from the extension's Auto mode, appended to the card's notes (e.g. why it needs review)
 // POST { company, title, page_url?, status? } (no id)     -> add a card manually
 export const POST = handle(async (req) => {
   const { user, db } = await requireUser(req);
@@ -39,6 +56,12 @@ export const POST = handle(async (req) => {
   const upd: Record<string, unknown> = { updated_at: now };
   if (status) { upd.status = status; if (status === "applied") upd.applied_at = now; }
   if (b.notes !== undefined) upd.notes = str(b.notes, 4000);
+  const autoNote = str(b.auto_note, 400);
+  if (autoNote && b.notes === undefined) {
+    const { data: cur } = await db.from("applications").select("notes").eq("id", uuid(b.id)).eq("user_id", user.id).maybeSingle();
+    const stamp = new Date().toLocaleString("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "medium", timeStyle: "short" });
+    upd.notes = [cur?.notes || "", `Auto mode (${stamp} IST): ${autoNote}`].filter(Boolean).join("\n").slice(-4000);
+  }
   if (b.follow_up !== undefined) {
     if (b.follow_up && !/^\d{4}-\d{2}-\d{2}$/.test(String(b.follow_up))) throw new HttpError(400, "follow_up must be YYYY-MM-DD");
     upd.follow_up = b.follow_up || null;

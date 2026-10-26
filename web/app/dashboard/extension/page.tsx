@@ -78,7 +78,7 @@ export default function ExtensionPage() {
         <h3>What the extension will and won&apos;t do</h3>
         <div className="grid grid-2 small">
           <ul style={{ paddingLeft: 18, margin: 0 }}><li>Runs only when you click it, on the tab you are looking at.</li><li>Fills fields in <b style={{ color: "#2ecc71" }}>green</b>, leaves questions for you in <b style={{ color: "#ff9f1c" }}>orange</b>.</li><li>Outlines the Next/Submit button in <b style={{ color: "#4f7cff" }}>blue</b> for you to click.</li></ul>
-          <ul style={{ paddingLeft: 18, margin: 0 }}><li>Never clicks Submit.</li><li>Never fills salary, personal or legal questions.</li><li>Skips password and hidden fields. CAPTCHAs and OTPs stay with you.</li></ul>
+          <ul style={{ paddingLeft: 18, margin: 0 }}><li>Review mode never clicks Submit. Optional Auto mode (off by default, side panel → Auto) submits only fully confident applications and sends the rest to Needs review. LinkedIn is never automated.</li><li>Never fills salary, personal or legal questions.</li><li>Skips password and hidden fields. CAPTCHAs and OTPs stay with you.</li></ul>
         </div>
       </div>
     </>

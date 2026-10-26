@@ -105,19 +105,22 @@ alter table public.applications add column if not exists updated_at timestamptz 
 alter table public.applications add column if not exists applied_at timestamptz;
 alter table public.applications add column if not exists autofilled_at timestamptz;
 alter table public.applications alter column status set default 'saved';
+-- Auto mode discovery (v2.2): where a card came from, and the ATS match computed when it was found.
+alter table public.applications add column if not exists source text not null default 'manual';
+alter table public.applications drop constraint if exists applications_source_check;
+alter table public.applications add constraint applications_source_check check (source in ('manual', 'auto'));
+create index if not exists applications_user_source_time on public.applications (user_id, source, created_at);
+alter table public.jobs add column if not exists ats_score int;
 
 -- v1 statuses → v2 Kanban columns
 update public.applications set status = 'saved' where status = 'filled';
 update public.applications set status = 'applied' where status = 'submitted';
 update public.applications set page_key = coalesce(page_key, id::text) where page_key is null;
 
-do $$
-begin
-  if not exists (select 1 from pg_constraint where conname = 'applications_status_check') then
-    alter table public.applications add constraint applications_status_check
-      check (status in ('saved', 'applied', 'interview', 'offer', 'rejected'));
-  end if;
-end $$;
+-- Status check (includes 'needs_review' for Auto mode). Drop + re-add so re-running upgrades older constraints.
+alter table public.applications drop constraint if exists applications_status_check;
+alter table public.applications add constraint applications_status_check
+  check (status in ('saved', 'needs_review', 'applied', 'interview', 'offer', 'rejected'));
 create unique index if not exists applications_user_page_key on public.applications (user_id, page_key);
 
 -- ───────────────────────── Row level security

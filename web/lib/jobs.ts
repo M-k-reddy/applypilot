@@ -3,7 +3,7 @@
 // JSearch (RapidAPI) only if RAPIDAPI_KEY is set.
 
 export type JobListing = {
-  external_id: string; source: "adzuna" | "remotive" | "arbeitnow" | "jsearch" | "extension";
+  external_id: string; source: "adzuna" | "remotive" | "arbeitnow" | "jsearch" | "greenhouse" | "lever" | "extension";
   title: string; company: string; location: string; remote: boolean;
   apply_url: string; description: string; posted_at: string | null; salary: string;
   fresher: boolean;

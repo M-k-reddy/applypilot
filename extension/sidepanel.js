@@ -1,6 +1,7 @@
 // ApplyPilot side panel. All API calls happen here (extension origin), never in page scripts.
 // Page access is on demand: chrome.scripting + activeTab, with optional host permissions as a fallback.
 // Security: every piece of page/API text is rendered with textContent, never innerHTML.
+// The Auto tab only shows state and sends start/stop messages; the Auto mode runner lives in background.js.
 "use strict";
 
 const $ = (id) => document.getElementById(id);
@@ -115,10 +116,11 @@ async function saveTabState() {
 }
 
 // ───────── tabs UI
-const TABS = ["job", "fill", "answers"];
+const TABS = ["job", "fill", "answers", "auto"];
 function showTab(name) {
   for (const t of TABS) { $(`tab-${t}`).setAttribute("aria-selected", String(t === name)); $(`panel-${t}`).hidden = t !== name; }
   if (name === "answers") loadAnswers();
+  if (name === "auto") renderAuto();
 }
 TABS.forEach((t) => $(`tab-${t}`).addEventListener("click", () => showTab(t)));
 document.querySelector(".tabs").addEventListener("keydown", (e) => {
@@ -328,6 +330,100 @@ function renderAnswers() {
 }
 $("answerSearch").addEventListener("input", renderAnswers);
 $("reloadAnswers").addEventListener("click", () => loadAnswers(true));
+
+// ───────── Auto tab (the run itself lives in background.js; this only shows state and sends start/stop)
+const ALL_SITES = ["https://*/*", "http://*/*"];
+async function renderAccess() {
+  const all = await chrome.permissions.contains({ origins: ALL_SITES });
+  const boards = all || await chrome.permissions.contains({ origins: JOB_SITES });
+  $("autoAccess").hidden = all;
+  $("autoAccessOk").hidden = !boards;
+  $("autoAccessOk").textContent = all ? "Site access: all sites ✓" : boards ? "Site access: job boards only. Jobs on other employer sites will be skipped." : "";
+  return boards;
+}
+function requestAccess(origins) {
+  chrome.permissions.request({ origins }).then((ok) => { say("autoMsg", ok ? "Access granted ✓" : "Not allowed.", ok ? "ok" : "bad"); renderAccess(); })
+    .catch((e) => say("autoMsg", String(e.message || e), "bad"));
+}
+// Permission requests must start synchronously in the click handler (user gesture).
+$("autoAllowAll").addEventListener("click", () => requestAccess(ALL_SITES));
+$("autoAllowBoards").addEventListener("click", () => requestAccess(JOB_SITES));
+
+const istDayUI = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+const STATUS_TEXT = { idle: "Idle", running: "Running", waiting: "Waiting before the next job", discovering: "Finding matching jobs", stopped: "Stopped" };
+async function renderAuto() {
+  const d = await chrome.storage.local.get(["autoEnabled", "autoCap", "autoState", "autoLog", "autoDaily", "autoDiscover", "autoKeywords", "autoLocation", "autoRemote", "autoMinScore"]);
+  const st = d.autoState || {}; const cap = Number(d.autoCap) || 20;
+  const today = d.autoDaily && d.autoDaily.day === istDayUI() ? d.autoDaily.count : 0;
+  $("autoEnabled").checked = !!d.autoEnabled; $("autoEnabledLabel").textContent = d.autoEnabled ? "On" : "Off";
+  if (document.activeElement !== $("autoCap")) $("autoCap").value = String(cap);
+  $("autoStart").disabled = !d.autoEnabled || !!st.running; $("autoStop").disabled = !st.running;
+  let status = STATUS_TEXT[st.status] || "Idle";
+  if (st.status === "waiting" && st.nextAt) status += ` (${Math.max(0, Math.round((st.nextAt - Date.now()) / 1000))}s)`;
+  $("autoStatus").textContent = st.message && !st.running ? `${status}: ${st.message}` : status;
+  const cur = st.current && st.current.app;
+  $("autoCurrent").textContent = cur ? `Now: ${[cur.company, cur.title].filter(Boolean).join(" · ") || cur.url}${st.current.step === "submitting" ? " (submitting…)" : ""}` : "";
+  $("autoToday").textContent = `${today}/${cap}`;
+  $("autoFoundToday").textContent = String(d.autoDaily && d.autoDaily.day === istDayUI() ? d.autoDaily.discovered || 0 : 0);
+  // Discovery settings ("Find jobs automatically" is on unless the user turned it off).
+  const disc = d.autoDiscover !== false;
+  $("autoDiscover").checked = disc; $("autoDiscoverLabel").textContent = disc ? "On" : "Off";
+  $("autoDiscoverFields").setAttribute("aria-disabled", String(!disc));
+  for (const [id, key] of [["autoKeywords", "autoKeywords"], ["autoLocation", "autoLocation"]]) if (document.activeElement !== $(id)) $(id).value = d[key] || "";
+  $("autoRemote").checked = d.autoRemote !== false;
+  if (document.activeElement !== $("autoMinScore")) $("autoMinScore").value = String(Number.isFinite(Number(d.autoMinScore)) && d.autoMinScore !== undefined ? d.autoMinScore : 30);
+  $("autoSubmitted").textContent = String(st.submitted || 0); $("autoSkipped").textContent = String(st.skipped || 0);
+  $("autoLeft").textContent = String((st.queue || []).length);
+  const ol = $("autoLog"); clear(ol);
+  const items = d.autoLog || [];
+  if (!items.length) ol.append(el("li", { class: "empty" }, [el("span", { text: "" }), el("span", { class: "muted", text: "Nothing yet." })]));
+  for (const x of items.slice(0, 100)) {
+    const t = new Date(x.t).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false });
+    ol.append(el("li", {}, [el("time", { text: t }), el("span", { class: x.kind || "", text: x.text || "" })]));
+  }
+  renderAccess();
+}
+$("autoEnabled").addEventListener("change", async (e) => {
+  const on = e.currentTarget.checked;
+  if (on && !(await renderAccess())) say("autoMsg", "Allow site access below before you start.", "bad"); else say("autoMsg", "");
+  await chrome.storage.local.set({ autoEnabled: on });
+});
+$("autoCap").addEventListener("change", async (e) => {
+  const n = Math.floor(Number(e.currentTarget.value));
+  if (!Number.isFinite(n) || n < 1 || n > 200) { say("autoMsg", "Cap must be between 1 and 200.", "bad"); return renderAuto(); }
+  await chrome.storage.local.set({ autoCap: n }); say("autoMsg", `Daily cap set to ${n}.`, "ok");
+});
+$("autoDiscover").addEventListener("change", async (e) => {
+  const on = e.currentTarget.checked;
+  await chrome.storage.local.set({ autoDiscover: on });
+  say("autoMsg", on ? "Auto mode will find matching jobs when the queue is empty." : "Auto mode will only use jobs you saved yourself.", "ok");
+});
+$("autoKeywords").addEventListener("change", async (e) => { await chrome.storage.local.set({ autoKeywords: e.currentTarget.value.trim().slice(0, 300) }); say("autoMsg", "Keywords saved.", "ok"); });
+$("autoLocation").addEventListener("change", async (e) => { await chrome.storage.local.set({ autoLocation: e.currentTarget.value.trim().slice(0, 200) }); say("autoMsg", "Location saved.", "ok"); });
+$("autoRemote").addEventListener("change", async (e) => { await chrome.storage.local.set({ autoRemote: e.currentTarget.checked }); });
+$("autoMinScore").addEventListener("change", async (e) => {
+  const n = Math.round(Number(e.currentTarget.value));
+  if (!Number.isFinite(n) || n < 0 || n > 100) { say("autoMsg", "Min fit score must be between 0 and 100.", "bad"); return renderAuto(); }
+  await chrome.storage.local.set({ autoMinScore: n }); say("autoMsg", `Min fit score set to ${n}%.`, "ok");
+});
+$("autoStart").addEventListener("click", async (e) => {
+  if (!(await renderAccess())) return say("autoMsg", "Allow site access first (all sites recommended).", "bad");
+  busy(e.currentTarget, true, "Starting…");
+  try {
+    const r = await chrome.runtime.sendMessage({ type: "auto:start" });
+    if (!r || !r.ok) say("autoMsg", (r && r.error) || "Could not start.", "bad"); else say("autoMsg", "Started. You can keep browsing; jobs open in a background tab.", "ok");
+  } catch (err) { say("autoMsg", String(err.message || err), "bad"); }
+  busy($("autoStart"), false); renderAuto();
+});
+$("autoStop").addEventListener("click", async () => {
+  try { await chrome.runtime.sendMessage({ type: "auto:stop" }); say("autoMsg", "Stopped.", ""); } catch (err) { say("autoMsg", String(err.message || err), "bad"); }
+  renderAuto();
+});
+$("autoClearLog").addEventListener("click", async () => { await chrome.storage.local.set({ autoLog: [] }); renderAuto(); });
+chrome.storage.onChanged.addListener((c, area) => {
+  if (area === "local" && (c.autoState || c.autoLog || c.autoDaily || c.autoEnabled || c.autoCap || c.autoDiscover || c.autoRemote) && !$("panel-auto").hidden) renderAuto();
+});
+setInterval(() => { if (!$("panel-auto").hidden) renderAuto(); }, 5000); // keeps the "next job in Ns" countdown fresh
 
 // ───────── follow the active tab
 let detectTimer = null;

@@ -48,7 +48,7 @@ export async function saveJob(db: SupabaseClient, userId: string, j: any) {
   if (!title) throw new HttpError(400, "Job title is required");
   const apply_url = httpUrl(j.apply_url || j.url, "apply_url");
   const description = str(j.description, 12000, "description");
-  const source = ["adzuna", "remotive", "arbeitnow", "jsearch", "extension"].includes(j.source) ? j.source : "extension";
+  const source = ["adzuna", "remotive", "arbeitnow", "jsearch", "greenhouse", "lever", "extension"].includes(j.source) ? j.source : "extension";
   const external_id = str(j.external_id, 300) || `url:${(apply_url || `${title}|${company}`).replace(/[?#].*$/, "").toLowerCase()}`;
   const row = {
     user_id: userId, external_id, source, title, company, apply_url, description,

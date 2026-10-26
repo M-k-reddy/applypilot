@@ -1,5 +1,8 @@
 // ApplyPilot autofill helpers. Injected on demand into the active tab (all permitted frames) by the side panel.
-// Exposes window.__AP = { collect, apply, readAnswers }. It reads and fills fields; it NEVER clicks Submit.
+// Exposes window.__AP = { collect, apply, readAnswers, clearMarks, inspect, audit, act }.
+// Review mode (side panel) only reads and fills; it never clicks Submit.
+// Auto mode (opt-in, driven by background.js) also uses inspect/audit/act: act() clicks Next/Continue, and clicks
+// Submit only when background.js has already verified every gate (required fields filled, no ask_user, no CAPTCHA/login).
 // Colours: green = filled, orange = needs you, blue = the button you click yourself.
 (() => {
   if (window.__AP) return;
@@ -129,5 +132,76 @@
     document.querySelectorAll("[data-ap-id]").forEach((el) => { el.style.outline = ""; el.style.outlineOffset = ""; if (el.parentElement) el.parentElement.style.outline = ""; });
   }
 
-  window.__AP = { collect, apply, readAnswers, clearMarks };
+  // ───────── Auto mode helpers (read-only except act())
+  const SUCCESS = /(thank(s| you) for (applying|your application|your interest)|application (has been |was |is )?(successfully )?(submitted|received|sent|complete)|successfully (applied|submitted)|we('|’)ve received your application|we have received your application|your application (has been|was|is) (submitted|received|sent)|applied successfully|you have (successfully )?applied|you('|’)ve applied)/i;
+  const LOGIN_TEXT = /\b(sign|log) ?in (to|before you) (apply|continue)|please (sign|log) ?in\b|create an account to apply|login to apply/i;
+  const NEXT_RE = /^(next|continue|save (and|&) continue|save (and|&) next|proceed|next step|review|review application|continue to (next step|review))\b/i;
+  const SUBMIT_RE = /^(submit|submit application|submit your application|send application|finish|complete application|confirm and submit)\b/i;
+  const WEAK_SUBMIT_RE = /^(apply|apply now|submit and apply)\b/i; // only counts as final when it sits inside a form with fields
+  const ENTRY_RE = /^(apply|apply now|apply for this (job|position|role)|apply to this job|start application|i('|’)m interested)\b/i;
+  const SSO_RE = /\b(with|using|via) (google|linkedin|facebook|apple|microsoft|github|indeed|email|otp)\b|sign ?in|log ?in|sign ?up|register|create account/i;
+  const btnText = (b) => clean(b.innerText || b.value || b.getAttribute("aria-label") || "").slice(0, 80);
+  const pageText = () => (document.body ? document.body.innerText || "" : "").slice(0, 60000);
+
+  function captchaVisible() {
+    for (const f of document.querySelectorAll("iframe")) {
+      const src = f.getAttribute("src") || "";
+      if (!/recaptcha|hcaptcha|challenges\.cloudflare|turnstile|arkoselabs|funcaptcha|geetest/i.test(src)) continue;
+      if (/size=invisible/i.test(src)) continue; // invisible reCAPTCHA badge alone is not a challenge
+      if (visible(f) && f.getBoundingClientRect().height > 30) return true;
+    }
+    return [...document.querySelectorAll(".g-recaptcha:not([data-size=invisible]), .h-captcha, .cf-turnstile, #captcha, [id*=captcha i] img, input[name*=captcha i]")].some(visible);
+  }
+  function loginWall() {
+    const pw = [...document.querySelectorAll("input[type=password]")].some(visible);
+    const path = /(^|\/)(login|signin|sign-in|sign_in|auth|sso|register|create-account)(\/|$|\?)/i.test(location.pathname);
+    const host = /^(login|accounts?|auth|sso|signin)\./i.test(location.hostname);
+    return pw || path || host || LOGIN_TEXT.test(pageText().slice(0, 8000));
+  }
+  /** Snapshot for Auto mode: is there a CAPTCHA / login wall / success message, and how many fields? */
+  function inspect() {
+    return { top: window === window.top, url: location.href, captcha: captchaVisible(), login: loginWall(), success: SUCCESS.test(pageText()),
+      fields: [...document.querySelectorAll("input, textarea, select")].filter((e) => !SKIP.includes((e.type || "").toLowerCase()) && (e.type === "file" || visible(e))).length,
+      textLen: pageText().length, visibility: document.visibilityState };
+  }
+  const isRequired = (el) => el.required || el.getAttribute("aria-required") === "true" || /\*\s*$/.test(labelFor(el)) ||
+    !!el.closest("[class*=required i], [data-required=true]") && /\*/.test(labelFor(el));
+  /** Visible required fields that are still empty, plus fields the site marked invalid. Returns labels only. */
+  function audit() {
+    const missing = [], invalid = [], seen = new Set();
+    document.querySelectorAll("input, textarea, select").forEach((el) => {
+      const type = (el.type || el.tagName).toLowerCase();
+      if (SKIP.includes(type) || el.disabled) return;
+      if (type !== "file" && !visible(el)) return;
+      if (el.getAttribute("aria-invalid") === "true") invalid.push(labelFor(el) || el.name || "field");
+      if (!isRequired(el)) return;
+      let empty;
+      if (type === "radio") { if (!el.name || seen.has(el.name)) return; seen.add(el.name); empty = ![...document.querySelectorAll(`input[type=radio][name="${CSS.escape(el.name)}"]`)].some((r) => r.checked); }
+      else if (type === "checkbox") empty = !el.checked;
+      else if (type === "file") empty = !(el.files && el.files.length) && !/\.(pdf|docx?|rtf|txt)\b/i.test(el.parentElement?.parentElement?.innerText || "");
+      else if (el.tagName === "SELECT") empty = !el.value || /^(select|choose|--|please select)/i.test(clean(el.options[el.selectedIndex]?.text || ""));
+      else empty = !String(el.value || "").trim();
+      if (empty) missing.push(labelFor(el) || el.name || "required field");
+    });
+    return { missing: missing.slice(0, 20), invalid: invalid.slice(0, 20) };
+  }
+  /** Find the step button. mode "find" just reports; "next" clicks Next/Continue; "submit" clicks the final Submit; "entry" clicks an Apply link/button. */
+  function act(mode) {
+    const btns = [...document.querySelectorAll("button, input[type=submit], [role=button], a[href]")].filter((b) => visible(b) && !b.disabled && b.getAttribute("aria-disabled") !== "true" && !SSO_RE.test(btnText(b)));
+    const next = btns.find((b) => b.tagName !== "A" && NEXT_RE.test(btnText(b)));
+    const inForm = (b) => { const f = b.closest("form"); return !!f && !!f.querySelector("input:not([type=hidden]), textarea, select"); };
+    const submit = btns.find((b) => b.tagName !== "A" && SUBMIT_RE.test(btnText(b)) && (inForm(b) || document.querySelector("input:not([type=hidden]), textarea, select")))
+      || btns.find((b) => b.tagName !== "A" && WEAK_SUBMIT_RE.test(btnText(b)) && inForm(b));
+    const entry = btns.find((b) => ENTRY_RE.test(btnText(b)) && (b.tagName !== "A" || !/^javascript:/i.test(b.getAttribute("href") || "")));
+    const kind = next ? "next" : submit ? "submit" : entry ? "entry" : null;
+    const found = { kind, label: kind ? btnText(next || submit || entry) : "", entryIsLink: !!entry && entry.tagName === "A", href: entry && entry.tagName === "A" ? entry.href : "" };
+    if (mode === "find") return found;
+    const target = mode === "next" ? next : mode === "submit" ? submit : mode === "entry" ? entry : null;
+    if (!target) return { ...found, clicked: false };
+    target.scrollIntoView({ block: "center" });
+    target.click();
+    return { ...found, clicked: true, clickedKind: mode };
+  }
+
+  window.__AP = { collect, apply, readAnswers, clearMarks, inspect, audit, act };
 })();

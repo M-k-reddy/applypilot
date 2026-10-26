@@ -37,6 +37,7 @@
     <button role="tab" id="tab-job" aria-controls="panel-job" aria-selected="true">Job</button>
     <button role="tab" id="tab-fill" aria-controls="panel-fill" aria-selected="false">Autofill</button>
     <button role="tab" id="tab-answers" aria-controls="panel-answers" aria-selected="false">Answers</button>
+    <button role="tab" id="tab-auto" aria-controls="panel-auto" aria-selected="false">Auto</button>
   </nav>
 
   <main>
@@ -72,7 +73,7 @@
     <section id="panel-fill" role="tabpanel" aria-labelledby="tab-fill" hidden>
       <div class="card">
         <h2>Fill this page</h2>
-        <p class="muted small">Fills what your profile can answer. <span class="dot g"></span>filled · <span class="dot o"></span>needs you · <span class="dot b"></span>you click it. ApplyPilot never clicks Submit.</p>
+        <p class="muted small">Fills what your profile can answer. <span class="dot g"></span>filled · <span class="dot o"></span>needs you · <span class="dot b"></span>you click it. In this Review mode ApplyPilot never clicks Submit.</p>
         <button id="fillBtn" class="btn primary big">⚡ Fill this page</button>
         <p class="muted small">Multi-step form? Click again on each step. It counts as one autofill.</p>
       </div>
@@ -94,6 +95,59 @@
         <div id="answerList" class="answers"></div>
       </div>
       <p id="answersMsg" class="msg" role="status" aria-live="polite"></p>
+    </section>
+    <section id="panel-auto" role="tabpanel" aria-labelledby="tab-auto" hidden>
+      <div class="card">
+        <div class="row between">
+          <h2>Auto mode</h2>
+          <label class="switch"><input id="autoEnabled" type="checkbox" role="switch" aria-describedby="autoWarn"><span id="autoEnabledLabel">Off</span></label>
+        </div>
+        <p id="autoWarn" class="muted small">Optional. When on, ApplyPilot works through the <b>Saved</b> jobs in your tracker one at a time in a background tab and <b>clicks Submit for you</b>, but only when every required field is filled, nothing needs your answer (salary, personal, extra files, unknown) and there is no CAPTCHA or sign-in. Everything else moves to <b>Needs review</b>. LinkedIn is never automated. Review mode (Autofill tab) still leaves Submit to you.</p>
+        <label class="field"><span>Daily cap (submissions per day, resets at midnight IST)</span><input id="autoCap" type="number" min="1" max="200" step="1" value="20"></label>
+        <div class="discover">
+          <div class="row between">
+            <h3>Find jobs automatically</h3>
+            <label class="switch"><input id="autoDiscover" type="checkbox" role="switch" aria-describedby="autoDiscoverHelp" checked><span id="autoDiscoverLabel">On</span></label>
+          </div>
+          <p id="autoDiscoverHelp" class="muted small">When the queue is empty, Auto mode finds fresh entry-level jobs that match your profile (Greenhouse and Lever forms first, then other boards), adds them to your tracker as <b>Saved · Auto</b> and applies with the same safety checks. No AI credits are used to find them. Leave the fields blank to use your profile.</p>
+          <div id="autoDiscoverFields">
+            <label class="field"><span>Keywords (optional, comma separated)</span><input id="autoKeywords" type="text" maxlength="300" placeholder="e.g. react, frontend, python" autocomplete="off"></label>
+            <label class="field"><span>Location (optional)</span><input id="autoLocation" type="text" maxlength="200" placeholder="From your profile, e.g. Hyderabad, Bengaluru" autocomplete="off"></label>
+            <div class="row between">
+              <label class="switch"><input id="autoRemote" type="checkbox" checked><span>Remote OK</span></label>
+              <label class="field inline"><span>Min fit score</span><input id="autoMinScore" type="number" min="0" max="100" step="5" value="30" style="width:72px"></label>
+            </div>
+          </div>
+        </div>
+        <div id="autoAccess" class="access" hidden>
+          <p class="small">Auto mode needs site access to open job pages in the background. Allow all sites (recommended, employers use many domains) or only the main job boards.</p>
+          <div class="row">
+            <button id="autoAllowAll" class="btn">Allow on all sites</button>
+            <button id="autoAllowBoards" class="btn">Allow on job boards</button>
+          </div>
+        </div>
+        <p id="autoAccessOk" class="muted small" hidden></p>
+        <div class="row">
+          <button id="autoStart" class="btn primary">▶ Start</button>
+          <button id="autoStop" class="btn">■ Stop</button>
+        </div>
+        <p id="autoMsg" class="msg" role="status" aria-live="polite"></p>
+      </div>
+      <div class="card" aria-live="polite">
+        <p id="autoStatus" class="small"></p>
+        <p id="autoCurrent" class="small muted"></p>
+        <div class="stats">
+          <div><b id="autoToday">0</b><span>applied today</span></div>
+          <div><b id="autoFoundToday">0</b><span>found today</span></div>
+          <div><b id="autoSubmitted">0</b><span>submitted</span></div>
+          <div><b id="autoSkipped">0</b><span>skipped</span></div>
+          <div><b id="autoLeft">0</b><span>in queue</span></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="row between"><h3>Log</h3><button id="autoClearLog" class="btn sm">Clear</button></div>
+        <ol id="autoLog" class="log"></ol>
+      </div>
     </section>
   </main>
   <script src="sidepanel.js"></script>

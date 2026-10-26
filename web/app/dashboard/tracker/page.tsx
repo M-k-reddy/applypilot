@@ -7,6 +7,7 @@ import { weekStats, type AppRow } from "@/lib/stats";
 
 const COLS = [
   { id: "saved", label: "Saved", color: "var(--muted)" },
+  { id: "needs_review", label: "Needs review", color: "var(--warn)" },
   { id: "applied", label: "Applied", color: "var(--info)" },
   { id: "interview", label: "Interview", color: "var(--brand)" },
   { id: "offer", label: "Offer", color: "var(--ok)" },
@@ -130,6 +131,7 @@ export default function TrackerPage() {
                       <h4>{a.company || "Company"}</h4>
                       <div className="meta">{a.title || "—"}</div>
                       <div className="row" style={{ marginTop: 8, gap: 6 }}>
+                        {a.source === "auto" && <span className="badge badge-ok" title="Found automatically by Auto mode">Auto</span>}
                         {a.autofilled_at && <span className="badge badge-brand">Autofilled</span>}
                         {a.follow_up && <span className={`badge ${overdue ? "badge-warn" : ""}`}>Follow up {a.follow_up}</span>}
                         {a.notes && <span className="badge" title={a.notes}>✎ note</span>}

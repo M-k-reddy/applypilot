@@ -7,7 +7,7 @@ const FEATURES = [
   { ico: "◎", t: "Live ATS keyword score", d: "A deterministic keyword-coverage score updates instantly as you accept changes, with matched and missing keyword chips." },
   { ico: "✓", t: "Honesty check built in", d: "Rewrites that invent numbers are dropped automatically, and new skills you never listed are flagged in orange." },
   { ico: "✎", t: "Cover letters in seconds", d: "Under 200 words, built only from your real projects. Edit inline, copy, or download as .txt." },
-  { ico: "⚡", t: "Safe autofill", d: "Fills forms on LinkedIn, Naukri, Internshala, Greenhouse, Lever and Workday. Salary and sensitive questions stay with you. You always click Submit." },
+  { ico: "⚡", t: "Safe autofill", d: "Fills forms on LinkedIn, Naukri, Internshala, Greenhouse, Lever and Workday. Salary and sensitive questions stay with you. In Review mode you click Submit; optional Auto mode submits only fully confident applications." },
   { ico: "★", t: "An answer bank that learns", d: "Answer a new question once and ApplyPilot remembers it for the next application." },
   { ico: "⌕", t: "Fresher-first job search", d: "Search Indian and remote jobs from free sources, filtered for freshers, interns, remote and city." },
   { ico: "?", t: "Interview prep", d: "8 likely questions per job, with answer pointers drawn from your own projects and skills." },
@@ -22,7 +22,7 @@ const COMPARE: [string, string, string][] = [
   ["Live ATS score while you review", "✓", "Sometimes"],
   ["Indian boards: Naukri and Internshala", "✓", "Often US-focused"],
   ["Answer bank learns from your answers", "✓", "Partial"],
-  ["Never clicks Submit for you", "✓", "Varies"],
+  ["Review mode by default, Auto mode only if you opt in", "✓", "Varies"],
   ["Interview prep from your profile", "✓", "Often an add-on"],
   ["Kanban tracker with follow-up dates", "✓", "Basic list"]
 ];
@@ -30,7 +30,7 @@ const COMPARE: [string, string, string][] = [
 const FAQ = [
   ["Is ApplyPilot really free?", "Yes. The free plan resets on the 1st of every month (IST) and covers 30 fit analyses, 15 resume tailors, 10 cover letters and 50 autofills. Job search, the ATS score and the tracker are always unlimited."],
   ["Will the AI make things up on my resume?", "It is told to use only facts from your profile, and every rewrite is checked: suggestions that add numbers you never wrote are dropped, and new skills are flagged so you can reject them. You approve every change."],
-  ["Does it submit applications automatically?", "Never. The extension fills what it can, outlines the Next or Submit button in blue, and you click it yourself. Salary, personal and unknown questions are left for you, highlighted in orange."],
+  ["Does it submit applications automatically?", "Only if you turn on Auto mode, which is off by default. In Review mode the extension fills what it can, outlines the Next or Submit button in blue, and you click it yourself. Auto mode works through jobs you saved, one at a time with a daily cap, and clicks Submit only when every required field is filled, nothing needs your answer (salary, personal or unknown questions) and there is no CAPTCHA or sign-in. Anything else goes to a Needs review column. LinkedIn is never automated."],
   ["Which sites does the extension support?", "Any job page with standard job data, plus dedicated support for LinkedIn, Naukri, Internshala, Indeed, Greenhouse, Lever and Workday. It only runs when you click it."],
   ["Is the ATS score the same as a company's ATS?", "No tool can see inside a company's ATS. Our score measures how many of the job description's important keywords appear in your resume, which is what keyword filters look for."],
   ["What happens to my data?", "Your resume and answers live in your own account and are used only to tailor and fill your applications. You can edit or delete them anytime."]
@@ -63,7 +63,7 @@ export default function Home() {
                 <Link href="/dashboard" className="btn btn-grad btn-lg">Tailor my resume free →</Link>
                 <a href="#how" className="btn btn-lg">See how it works</a>
               </div>
-              <div className="trust"><span>No card needed</span><span>You click Submit</span><span>Prices in ₹</span></div>
+              <div className="trust"><span>No card needed</span><span>Auto-submit only if you opt in</span><span>Prices in ₹</span></div>
             </div>
 
             <div className="mock" role="img" aria-label="Preview: a job application being filled while the ApplyPilot side panel shows a 86% ATS score and an accepted resume edit">
@@ -101,7 +101,7 @@ export default function Home() {
             <div className="steps">
               <div className="step"><h3>Upload your resume</h3><p className="muted mb-0">AI turns your PDF into an editable profile and answer sheet: education, projects, skills, notice period and more.</p></div>
               <div className="step"><h3>Tailor to the job</h3><p className="muted mb-0">Open any job, review suggested edits side by side, and watch your ATS score climb as you accept them. Export a clean PDF.</p></div>
-              <div className="step"><h3>Apply with the extension</h3><p className="muted mb-0">The side panel spots the job, saves it to your tracker and fills the form. You check it and click Submit.</p></div>
+              <div className="step"><h3>Apply with the extension</h3><p className="muted mb-0">The side panel spots the job, saves it to your tracker and fills the form. You check it and click Submit, or let optional Auto mode submit the ones it is fully confident about.</p></div>
             </div>
           </div>
         </section>
@@ -183,7 +183,7 @@ export default function Home() {
 
       <footer className="footer">
         <div className="container footer-grid">
-          <div><Logo /><p style={{ marginTop: 12, maxWidth: 380 }}>An honest AI copilot for job applications. You stay in control of every edit and every Submit.</p></div>
+          <div><Logo /><p style={{ marginTop: 12, maxWidth: 380 }}>An honest AI copilot for job applications. You stay in control of every edit, and of whether it ever clicks Submit.</p></div>
           <div className="stack" style={{ gap: 2 }}><b style={{ color: "var(--text)" }}>Product</b><a href="#features">Features</a><a href="#pricing">Pricing</a><Link href="/dashboard/extension">Chrome extension</Link></div>
           <div className="stack" style={{ gap: 2 }}><b style={{ color: "var(--text)" }}>Account</b><Link href="/dashboard">Sign in</Link><Link href="/dashboard/profile">Your profile</Link><a href="#faq">FAQ</a></div>
         </div>
