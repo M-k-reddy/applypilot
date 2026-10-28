@@ -115,6 +115,23 @@ create table if not exists usage_events (
   meta jsonb default '{}'::jsonb,
   created_at timestamptz default now()
 );
+-- v1 -> v2 compatibility (safe to re-run)
+alter table profiles add column if not exists plan text not null default 'free';
+alter table profiles add column if not exists razorpay_subscription_id text;
+alter table applications drop constraint if exists applications_source_check;
+alter table applications alter column source drop not null;
+do $$ begin
+  if exists (select 1 from information_schema.columns where table_schema='public' and table_name='usage_events' and column_name='kind') then
+    alter table usage_events drop constraint if exists usage_events_kind_check;
+    alter table usage_events alter column kind drop not null;
+    alter table usage_events add column if not exists feature text;
+    update usage_events set feature = kind where feature is null;
+    alter table usage_events alter column feature set default 'other';
+    update usage_events set feature = 'other' where feature is null;
+    alter table usage_events alter column feature set not null;
+  end if;
+end $$;
+alter table usage_events add column if not exists meta jsonb default '{}'::jsonb;
 create index if not exists usage_user_feature on usage_events (user_id, feature, created_at desc);
 
 -- Row level security
