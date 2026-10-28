@@ -1,0 +1,36 @@
+<!doctype html><html><head><meta charset="utf-8"><link rel="stylesheet" href="popup.css"></head><body>
+<header class="top">
+  <div class="brand"><span class="logo">A</span><b>ApplyPilot</b></div>
+  <button id="gear" class="icon" title="Settings" aria-label="Settings"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg></button>
+</header>
+
+<section id="settings" class="card hidden">
+  <label>API URL<input id="api" placeholder="https://your-app.vercel.app"></label>
+  <label>Extension token <small>(from Dashboard)</small><input id="token" placeholder="paste token"></label>
+  <label>Resume PDF <small>(for file uploads)</small><input id="resume" type="file" accept="application/pdf"></label>
+  <button id="save" class="btn primary">Save settings</button>
+</section>
+
+<section id="job" class="card">
+  <div class="muted xs">This page</div>
+  <div id="jobTitle" class="title"><span class="skel w70"></span></div>
+  <div id="jobCompany" class="muted sm"><span class="skel w40"></span></div>
+  <div id="team" class="team"></div>
+</section>
+
+<button id="fill" class="btn primary block">Fill this page</button>
+<div class="grid2">
+  <button id="saveJob" class="btn">Save job</button>
+  <button id="referral" class="btn">Write referral note</button>
+</div>
+<details class="card" id="hrBox">
+  <summary>Find HR contact</summary>
+  <label>Company domain<input id="domain" placeholder="e.g. razorpay.com"></label>
+  <button id="findHr" class="btn block">Find HR (free)</button>
+</details>
+
+<div id="status" class="status" role="status"></div>
+<div id="out"></div>
+<footer class="muted xs">You always click Submit. Nothing is sent for you.</footer>
+<script src="popup.js"></script>
+</body></html>
