@@ -32,21 +32,41 @@ export type Auth = ReturnType<typeof useAuth>;
 
 function SignIn({ supabase }: { supabase: ReturnType<typeof browserClient> }) {
   const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [usePassword, setUsePassword] = useState(false);
   const [msg, setMsg] = useState<{ tone: "ok" | "bad"; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
   return (
     <main style={{ minHeight: "100vh", display: "grid", placeItems: "center", padding: 20 }}>
       <div className="card stack" style={{ width: "100%", maxWidth: 400, padding: 28 }}>
         <div className="brand" style={{ padding: 0 }}><span className="logo">A</span>ApplyPilot</div>
-        <div><h2>Sign in</h2><p className="muted sm" style={{ marginTop: 4 }}>We'll email you a magic link. No password needed.</p></div>
+        <div>
+          <h2>Sign in</h2>
+          <p className="muted sm" style={{ marginTop: 4 }}>
+            {usePassword ? "Sign in with your email and password." : "We'll email you a magic link. No password needed."}
+          </p>
+        </div>
         <form className="stack" onSubmit={async (e) => {
-          e.preventDefault(); setBusy(true);
-          const { error } = await supabase.auth.signInWithOtp({ email, options: { emailRedirectTo: location.href } });
-          setBusy(false); setMsg(error ? { tone: "bad", text: error.message } : { tone: "ok", text: "Check your email for the sign-in link." });
+          e.preventDefault(); setBusy(true); setMsg(null);
+          if (usePassword) {
+            const { error } = await supabase.auth.signInWithPassword({ email, password });
+            setBusy(false);
+            if (error) setMsg({ tone: "bad", text: error.message });
+          } else {
+            const { error } = await supabase.auth.signInWithOtp({ email, options: { emailRedirectTo: location.origin + location.pathname } });
+            setBusy(false);
+            setMsg(error ? { tone: "bad", text: error.message } : { tone: "ok", text: "Check your email for the sign-in link." });
+          }
         }}>
           <Field label="Email"><input type="email" required placeholder="you@email.com" value={email} onChange={(e) => setEmail(e.target.value)} /></Field>
-          <Button variant="primary" loading={busy} type="submit">Email me a link</Button>
+          {usePassword && (
+            <Field label="Password"><input type="password" required placeholder="Your password" value={password} onChange={(e) => setPassword(e.target.value)} /></Field>
+          )}
+          <Button variant="primary" loading={busy} type="submit">{usePassword ? "Sign in" : "Email me a link"}</Button>
         </form>
+        <button type="button" className="btn ghost sm" onClick={() => { setUsePassword(!usePassword); setMsg(null); }}>
+          {usePassword ? "Use a magic link instead" : "Sign in with password"}
+        </button>
         {msg && <Alert tone={msg.tone}>{msg.text}</Alert>}
       </div>
     </main>
