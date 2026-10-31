@@ -2,12 +2,12 @@ const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const status = (t, kind = "") => { const el = $("status"); el.textContent = t; el.className = `status ${kind}`; };
 const api = (path, body, method = "POST") => new Promise((res) => chrome.runtime.sendMessage({ type: "AP_API", path, body, method }, res));
-let job = null;
+let job = null, loadedToken = "";
 
 async function activeTab() { const [tab] = await chrome.tabs.query({ active: true, currentWindow: true }); return tab; }
 
 chrome.storage.local.get(["api", "token", "resumeName", "answers", "apMinScore", "apDailyCap"], (s) => {
-  $("api").value = s.api || ""; $("token").value = s.token || ""; $("answers").value = s.answers || "";
+  $("api").value = s.api || ""; $("token").value = s.token || ""; loadedToken = s.token || ""; $("answers").value = s.answers || "";
   if (s.apMinScore != null) $("apMin").value = s.apMinScore; if (s.apDailyCap != null) $("apCap").value = s.apDailyCap;
   if (!s.api || !s.token) $("settings").classList.remove("hidden");
   if (s.resumeName) status(`Resume saved: ${s.resumeName}`);
@@ -16,6 +16,8 @@ $("gear").onclick = () => $("settings").classList.toggle("hidden");
 
 $("save").onclick = async () => {
   const data = { api: $("api").value.replace(/\/$/, ""), token: $("token").value.trim(), answers: $("answers").value.trim() };
+  if (data.token === loadedToken) delete data.token; // unchanged: keep the auto-refreshed one
+  else { data.access = ""; data.accessExp = 0; }    // new token: sign in fresh with it
   const f = $("resume").files[0];
   if (f) {
     const b64 = await new Promise((r) => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsDataURL(f); });

@@ -203,7 +203,7 @@
   });
   // ---------------- One-click Apply ----------------
   const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-  const human = () => sleep(700 + Math.random() * 900); // human pace between steps, keeps accounts safe
+  const human = () => sleep(250 + Math.random() * 350); // human pace between steps, keeps accounts safe
   const callApi = (path, body, method) => new Promise((res) => chrome.runtime.sendMessage({ type: "AP_API", path, body, method }, res));
   const bText = (b) => clean(b.innerText || b.value || b.getAttribute("aria-label") || "");
   const buttons = (root) => deepAll("button, input[type=submit], a[role=button]", root).filter(visible).filter((b) => !b.disabled && b.getAttribute("aria-disabled") !== "true");
@@ -317,6 +317,7 @@
   }
 
   // The Easy Apply button of the open job, never the "Easy Apply" search filter pill.
+  const easyOrApply = () => easyBtn() || findBtn(document, /^apply/i);
   const easyBtn = () => deepAll("button.jobs-apply-button, #jobs-apply-button-id, .jobs-apply-button--top-card button, .jobs-s-apply button").filter(visible).find((b) => /easy apply/i.test(bText(b)))
     || buttons(document).find((b) => /easy apply/i.test(bText(b)) && !/filter/i.test((b.getAttribute("aria-label") || "") + " " + (b.id || "") + " " + (b.className || "")) && !b.closest(".search-reusables__filter-list, .jobs-search-box, [class*='filter']"));
   async function linkedIn(autoSubmit) {
@@ -415,9 +416,26 @@
   // ---------------- Autopilot (LinkedIn search results, Easy Apply only) ----------------
   let lastAsk = "";
   const jitter = (a, b) => sleep(a + Math.random() * (b - a));
-  const cardList = () => deepAll("li[data-occludable-job-id], li.jobs-search-results__list-item, div.job-card-container[data-job-id]")
-    .filter((c, i, arr) => arr.indexOf(c) === i);
-  const cardId = (c) => c.getAttribute("data-occludable-job-id") || c.getAttribute("data-job-id") || c.querySelector("[data-job-id]")?.getAttribute("data-job-id") || "";
+  // Job cards in the left list. LinkedIn changes markup often, so try several shapes and ignore the detail pane.
+  const inDetail = (el) => !!el.closest(".jobs-search__job-details, .jobs-details, .job-view-layout, [class*='job-details'], .jobs-unified-top-card, [role=dialog]");
+  const idFrom = (el) => {
+    const a = el.getAttribute?.("data-occludable-job-id") || el.getAttribute?.("data-job-id"); if (a) return a;
+    const urn = (el.getAttribute?.("data-entity-urn") || el.querySelector?.("[data-entity-urn]")?.getAttribute("data-entity-urn") || "").match(/(\d{6,})/); if (urn) return urn[1];
+    const inner = el.querySelector?.("[data-job-id], [data-occludable-job-id]"); if (inner) return inner.getAttribute("data-job-id") || inner.getAttribute("data-occludable-job-id");
+    const href = (el.matches?.("a") ? el : el.querySelector?.("a[href*='/jobs/view/'], a[href*='currentJobId=']"))?.getAttribute("href") || "";
+    const m = href.match(/\/jobs\/view\/(\d+)/) || href.match(/currentJobId=(\d+)/); if (m) return m[1];
+    const t = clean(el.innerText).slice(0, 80); return t ? "t:" + t : "";
+  };
+  function cardList() {
+    const found = [];
+    // LinkedIn leaves off-screen cards empty until scrolled, so an id is enough
+    const add = (el) => { if (el && !inDetail(el) && !found.includes(el) && (clean(el.innerText) || el.hasAttribute("data-occludable-job-id") || el.hasAttribute("data-job-id"))) found.push(el); };
+    deepAll("li[data-occludable-job-id], div.job-card-container[data-job-id], li.jobs-search-results__list-item, li.scaffold-layout__list-item, [data-view-name*='job-card'], [data-view-name*='job-search-card']").forEach(add);
+    if (!found.length) deepAll("a[href*='/jobs/view/'], a[href*='currentJobId=']").forEach((a) => add(a.closest("li") || a.closest("[data-view-name]") || a.parentElement));
+    const seenIds = new Set();
+    return found.filter((c) => { const id = idFrom(c); if (!id || seenIds.has(id)) return false; seenIds.add(id); return true; });
+  }
+  const cardId = (c) => idFrom(c);
 
   async function closeEasyApply() {
     const dlg = () => deepAll(".jobs-easy-apply-modal, [data-test-modal-id='easy-apply-modal'], .artdeco-modal, [role=dialog]").filter(visible)[0];
@@ -429,20 +447,21 @@
   }
 
   async function openCard(card) {
-    card.scrollIntoView({ block: "center" }); await jitter(500, 1100);
+    card.scrollIntoView({ block: "center" }); await jitter(200, 450);
     const id = cardId(card);
     const link = card.querySelector("a.job-card-list__title, a.job-card-container__link, a[href*='/jobs/view/']") || card;
     const before = readJob().title;
     link.click();
-    await waitFor(() => (id && location.href.includes(id)) || readJob().title !== before, 7000);
-    await jitter(1200, 2200); // let the description load
+    await waitFor(() => (id && !id.startsWith("t:") && location.href.includes(id)) || readJob().title !== before, 6000);
+    await waitFor(() => readJob().description.length > 200 && easyOrApply(), 4000);
+    await sleep(300);
   }
 
   async function nextPage() {
     const btn = deepAll("button[aria-label='View next page'], button.jobs-search-pagination__button--next")[0]
       || (() => { const cur = deepAll(".artdeco-pagination__indicator--number.active, li.active[data-test-pagination-page-btn]")[0]; return cur?.nextElementSibling?.querySelector("button"); })();
     if (!btn) return false;
-    btn.click(); await jitter(2500, 4000); return true;
+    btn.click(); await waitFor(() => cardList().length, 6000); await sleep(1200); return true;
   }
 
   async function autopilot() {
@@ -451,25 +470,28 @@
     const minScore = Number(s.apMinScore ?? 70), cap = Number(s.apDailyCap ?? 25);
     const day = new Date().toISOString().slice(0, 10);
     const seen = new Set(s.apSeen || []);
-    const stats = { applied: 0, skipped: 0, low: 0 }; const log = [];
+    const stats = { applied: 0, skipped: 0, low: 0 }; const log = []; let early = false;
     const head = () => (apHead = `Applied ${stats.applied} · Low match ${stats.low} · Needs you ${stats.skipped} · min ${minScore}%`);
     try {
       if (!/\/jobs\/(search|collections)/.test(location.pathname)) {
-        autoMode = false; return qpanel("Open LinkedIn Jobs search first. Search a role, turn on the Easy Apply filter, then start Autopilot.");
+        early = true; autoMode = false; return qpanel("Open LinkedIn Jobs search first. Search a role, turn on the Easy Apply filter, then start Autopilot.");
       }
+      await waitFor(() => cardList().length, 6000);
+      if (!cardList().length) { early = true; autoMode = false; apHead = ""; return qpanel("I couldn't find the job list on this page. Make sure the left side shows job cards, scroll it once, then press Start again. If it still fails, send me a screenshot."); }
       for (let page = 1; page <= 10 && !stopFlag; page++) {
-        let idx = 0;
+        let idx = 0; log.push(`Page ${page}: ${cardList().length} jobs found`);
         while (!stopFlag) {
           const cards = cardList(); if (idx >= cards.length) break;
           const card = cards[idx++]; const id = cardId(card);
           if (!id || seen.has(id)) continue;
           seen.add(id); chrome.storage.local.set({ apSeen: [...seen].slice(-3000) });
-          if (/\bapplied\b/i.test(card.innerText || "")) continue;
+
           const today = ((await chrome.storage.local.get("apCount")).apCount || {})[day] || 0;
           if (today >= cap) { stopFlag = true; log.push(`Reached today's limit of ${cap}.`); break; }
 
           head(); qpanel(`Opening job ${idx} on page ${page}…`);
           await openCard(card); if (stopFlag) break;
+          if (/\bapplied\b/i.test(card.innerText || "")) { log.push(`Already applied: ${clean(card.innerText).slice(0, 50)}`); continue; }
           const job = readJob();
           if (!easyBtn()) { log.push(`Skipped (not Easy Apply): ${job.title}`); continue; }
           const m = await callApi("/api/match", { quick: true, job });
@@ -488,13 +510,14 @@
             else await callApi("/api/applications", { action: "save", source: "autopilot", job });
           }
           await closeEasyApply();
-          head(); await jitter(4000, 9000); // human pace between jobs
+          head(); await jitter(1500, 3000); // short pause between jobs
         }
         if (stopFlag || !(await nextPage())) break;
       }
     } catch (e) { log.push(`⚠️ ${String(e.message || e)}`); }
     finally {
-      running = false; head();
+      running = false; if (early) return;
+      head();
       const list = log.slice(-12).map((l) => `<li>${l.replace(/[<>&]/g, "")}</li>`).join("");
       qpanel(`Autopilot finished.<ul style="margin:6px 0;padding-left:18px;max-height:220px;overflow:auto">${list}</ul>Jobs that need you are saved in your Tracker.`);
       autoMode = false; apHead = "";
