@@ -21,6 +21,7 @@ export default function Dashboard() {
   const [jobs, setJobs] = useState<any[] | null>(null);
   const [busy, setBusy] = useState("");
   const [err, setErr] = useState("");
+  const [extToken, setExtToken] = useState("");
 
   useEffect(() => {
     if (!session) return;
@@ -110,10 +111,10 @@ export default function Dashboard() {
           : jobs.map((j) => <JobCard key={j.id} j={j} api={api} />)}
       </section>
 
-      <Card title="Chrome extension" sub="Paste this token into the extension popup with your API URL. It expires in about an hour; reopen this page for a fresh one.">
+      <Card title="Chrome extension" sub="Generate a token once and paste it into the extension settings with your API URL. It keeps itself signed in.">
         <div className="stack" style={{ gap: 8 }}>
-          <code className="token">{session?.access_token}</code>
-          <div><CopyButton text={session?.access_token || ""} label="Copy token" /></div>
+          {extToken ? <><code className="token">{extToken}</code><div><CopyButton text={extToken} label="Copy token" /></div></>
+            : <div><Button onClick={() => run("ext", async () => { const r = await api("/api/extension/connect", { method: "POST", json: {} }); setExtToken(r.token); })} disabled={busy === "ext"}>{busy === "ext" ? "Generating…" : "Generate extension token"}</Button></div>}
         </div>
       </Card>
     </Page>
