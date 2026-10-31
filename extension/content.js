@@ -5,13 +5,20 @@
   if (window.__applypilot) return; window.__applypilot = true;
 
   const visible = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0 && getComputedStyle(el).visibility !== "hidden"; };
+  // LinkedIn renders Easy Apply inside a shadow root (#interop-outlet), so every lookup also walks open shadow roots.
+  function shadowRoots(root = document) {
+    const out = []; const walk = (r) => r.querySelectorAll("*").forEach((n) => { if (n.shadowRoot) { out.push(n.shadowRoot); walk(n.shadowRoot); } });
+    walk(root); return out;
+  }
+  const deepAll = (sel, root = document) => [root, ...shadowRoots(root)].flatMap((r) => [...r.querySelectorAll(sel)]);
+  const deepText = () => [document.body, ...shadowRoots(document)].map((r) => r.innerText || [...r.children].map((c) => c.innerText || "").join("\n")).join("\n");
   const clean = (t) => (t || "").replace(/\s+/g, " ").trim().slice(0, 200);
 
   function labelFor(el) {
-    if (el.id) { const l = document.querySelector(`label[for="${CSS.escape(el.id)}"]`); if (l) return clean(l.innerText); }
+    if (el.id) { const l = el.getRootNode().querySelector?.(`label[for="${CSS.escape(el.id)}"]`); if (l) return clean(l.innerText); }
     if (el.getAttribute("aria-label")) return clean(el.getAttribute("aria-label"));
     const by = el.getAttribute("aria-labelledby");
-    if (by) return clean(by.split(" ").map((i) => document.getElementById(i)?.innerText || "").join(" "));
+    if (by) return clean(by.split(" ").map((i) => (el.getRootNode().getElementById?.(i) || document.getElementById(i))?.innerText || "").join(" "));
     const wrap = el.closest("label"); if (wrap) return clean(wrap.innerText);
     const fs = el.closest("fieldset")?.querySelector("legend"); if (fs) return clean(fs.innerText);
     let n = el; for (let i = 0; i < 4 && n; i++) { n = n.parentElement; const t = n?.querySelector("label, legend, span, p"); if (t && clean(t.innerText)) return clean(t.innerText); }
@@ -21,7 +28,7 @@
   let seq = 0; // field ids stay unique across steps
   function collect(root = document) {
     const fields = [], seenRadio = new Set(); let i = seq;
-    root.querySelectorAll("input, textarea, select, [contenteditable=true]").forEach((el) => {
+    deepAll("input, textarea, select, [contenteditable=true]", root).forEach((el) => {
       if (el.isContentEditable && el.tagName !== "INPUT" && el.tagName !== "TEXTAREA") {
         if (!visible(el) || clean(el.innerText)) return;
         const id = `ap${i++}`; el.dataset.apId = id;
@@ -75,7 +82,7 @@
   async function apply(actions) {
     let filled = 0; const asks = [];
     for (const a of actions) {
-      const els = [...document.querySelectorAll(`[data-ap-id="${a.id}"]`)]; const el = els[0]; if (!el) continue;
+      const els = deepAll(`[data-ap-id="${a.id}"]`); const el = els[0]; if (!el) continue;
       try {
         if (a.action === "ask_user") { asks.push(a); mark(el, "#ff9f1c", `ApplyPilot: please answer (${a.reason || "needs you"})`); continue; }
         if (a.action === "upload_resume") { if (await uploadResume(el)) { filled++; mark(el.parentElement || el, "#2ecc71"); } else asks.push({ ...a, reason: "save your resume in the extension" }); continue; }
@@ -199,10 +206,10 @@
   const human = () => sleep(700 + Math.random() * 900); // human pace between steps, keeps accounts safe
   const callApi = (path, body, method) => new Promise((res) => chrome.runtime.sendMessage({ type: "AP_API", path, body, method }, res));
   const bText = (b) => clean(b.innerText || b.value || b.getAttribute("aria-label") || "");
-  const buttons = (root) => [...root.querySelectorAll("button, input[type=submit], a[role=button]")].filter(visible).filter((b) => !b.disabled && b.getAttribute("aria-disabled") !== "true");
+  const buttons = (root) => deepAll("button, input[type=submit], a[role=button]", root).filter(visible).filter((b) => !b.disabled && b.getAttribute("aria-disabled") !== "true");
   const findBtn = (root, re, not) => buttons(root).find((b) => re.test(bText(b)) && !(not && not.test(bText(b))));
   async function waitFor(fn, ms = 8000) { const t = Date.now(); while (Date.now() - t < ms) { const v = fn(); if (v) return v; await sleep(300); } return null; }
-  const pageHas = (re, root = document.body) => re.test(root.innerText || "");
+  const pageHas = (re, root) => re.test(root ? (root.innerText || "") : deepText());
   const host = location.hostname;
   const site = /linkedin\.com$/.test(host) ? "linkedin" : /naukri\.com$/.test(host) ? "naukri" : /indeed\./.test(host) ? "indeed" : "generic";
 
@@ -213,14 +220,15 @@
       qp.style.cssText = "position:fixed;right:16px;bottom:16px;z-index:2147483647;background:#141a2a;color:#e8ecf4;border:1px solid #33405e;border-radius:12px;padding:14px;width:300px;font:13px system-ui;box-shadow:0 8px 30px #0008";
       document.body.appendChild(qp);
     }
-    qp.innerHTML = `<b>ApplyPilot · One-click Apply</b><div style="margin-top:6px">${html}</div>${buttonsHtml}
+    qp.innerHTML = `<b>ApplyPilot · ${autoMode ? "Autopilot" : "One-click Apply"}</b>${apHead ? `<div style="margin-top:6px;color:#9fb0d0">${apHead}</div>` : ""}<div style="margin-top:6px">${html}</div>${buttonsHtml}
       <button data-qp="x" style="margin-top:6px;width:100%;padding:6px;border:1px solid #33405e;border-radius:8px;background:none;color:#e8ecf4;cursor:pointer">Close</button>`;
-    qp.querySelector('[data-qp="x"]').onclick = () => { stopFlag = true; qp.remove(); };
+    const x = qp.querySelector('[data-qp="x"]'); if (autoMode) { x.textContent = "Stop Autopilot"; x.style.borderColor = "#ff6b6b"; }
+    x.onclick = () => { stopFlag = true; if (!autoMode) qp.remove(); else qpanel("Stopping after this step…"); };
     return qp;
   }
   const bigBtn = (id, label, color = "#4f7cff") => `<button data-qp="${id}" style="margin-top:8px;width:100%;padding:8px;border:0;border-radius:8px;background:${color};color:#fff;font-weight:700;cursor:pointer">${label}</button>`;
 
-  let appId = null, stopFlag = false, running = false;
+  let appId = null, stopFlag = false, running = false, outcome = null, autoMode = false, apHead = "";
 
   async function track(status) {
     if (!appId) {
@@ -232,20 +240,24 @@
 
   async function fillStep(root) {
     const fields = collect(root).filter((f) => !(f.current && f.required !== true && f.type !== "select"));
-    if (!fields.length) return { filled: 0, asks: [] };
-    const res = await callApi("/api/agent", { url: location.href.split("#")[0], pageTitle: document.title, fields, applicationId: appId || undefined });
+    if (!fields.length) return { filled: 0, asks: [], none: true };
+    const { answers = "" } = await chrome.storage.local.get("answers");
+    const res = await callApi("/api/agent", { url: location.href.split("#")[0], pageTitle: document.title, fields, applicationId: appId || undefined, answers });
     if (!res || res.error) throw new Error(res?.error || "API error");
     appId = res.applicationId || appId;
     return apply(res.actions || []);
   }
 
   function needYou(asks, why) {
+    outcome = "needs_you";
+    if (autoMode) { lastAsk = asks.map((a) => a.reason).filter(Boolean).join("; ") || why || ""; return; }
     const list = asks.length ? "<ul style='margin:4px 0;padding-left:18px'>" + asks.slice(0, 6).map((a) => `<li>${a.reason || a.label || a.id}</li>`).join("") + "</ul>" : "";
     const p = qpanel(`🟧 ${why || "A few answers need you"}:${list}Answer the orange fields, then press Continue.`, bigBtn("go", "Continue"));
     p.querySelector('[data-qp="go"]').onclick = () => quickApply();
   }
 
   async function finishedOk() {
+    outcome = "applied";
     await track("applied");
     const { apCount = {} } = await chrome.storage.local.get("apCount");
     const day = new Date().toISOString().slice(0, 10); apCount[day] = (apCount[day] || 0) + 1;
@@ -268,8 +280,9 @@
   async function afterSubmit(root) {
     const ok = await waitFor(() => pageHas(/application (was )?sent|successfully applied|application submitted|you applied|thank you for applying|applied successfully|your application has been/i), 10000);
     if (ok) return finishedOk();
-    const err = root && document.body.contains(root) && root.querySelector('.artdeco-inline-feedback--error, [role=alert], .error, [aria-invalid=true]');
+    const err = root && root.isConnected && root.querySelector('.artdeco-inline-feedback--error, [role=alert], .error, [aria-invalid=true]');
     if (err) return needYou([], "The site flagged something before submitting");
+    if (autoMode) return finishedOk();
     qpanel("Submitted. I couldn't see a confirmation message, so check the page.", bigBtn("ok", "Mark as applied", "#2ecc71"))
       .querySelector('[data-qp="ok"]').onclick = finishedOk;
   }
@@ -280,7 +293,8 @@
     for (let step = 1; step <= 15 && !stopFlag; step++) {
       const root = getRoot(); if (!root) return qpanel("The application window closed.");
       qpanel(`Step ${step}: filling…`);
-      const { filled, asks } = await fillStep(root);
+      const { filled, asks, none } = await fillStep(root);
+      if (none) qpanel(`Step ${step}: nothing to fill here, moving on…`);
       if (asks.length) return needYou(asks);
       await human();
       const submit = findBtn(root, submitRe);
@@ -302,10 +316,17 @@
     if (!stopFlag) needYou([], "This form has more steps than expected");
   }
 
+  // The Easy Apply button of the open job, never the "Easy Apply" search filter pill.
+  const easyBtn = () => deepAll("button.jobs-apply-button, #jobs-apply-button-id, .jobs-apply-button--top-card button, .jobs-s-apply button").filter(visible).find((b) => /easy apply/i.test(bText(b)))
+    || buttons(document).find((b) => /easy apply/i.test(bText(b)) && !/filter/i.test((b.getAttribute("aria-label") || "") + " " + (b.id || "") + " " + (b.className || "")) && !b.closest(".search-reusables__filter-list, .jobs-search-box, [class*='filter']"));
   async function linkedIn(autoSubmit) {
-    const dialog = () => document.querySelector(".jobs-easy-apply-modal, [data-test-modal-id='easy-apply-modal'], .artdeco-modal[role=dialog]");
+    const dialog = () => {
+      const all = deepAll(".jobs-easy-apply-modal, [data-test-modal-id='easy-apply-modal'], .artdeco-modal, [role=dialog]").filter(visible);
+      return all.find((d) => d.matches(".jobs-easy-apply-modal, [data-test-modal-id='easy-apply-modal']"))
+        || all.find((d) => /apply to|easy apply|contact info|submit application|review your application|resume/i.test(d.innerText || "") && d.querySelector("input, select, textarea, button"));
+    };
     if (!dialog()) {
-      const btn = findBtn(document, /easy apply/i);
+      const btn = easyBtn();
       if (!btn) {
         if (findBtn(document, /^apply/i)) return qpanel("This job applies on the company's own site. Click Apply there, then use “Fill this page”.");
         if (pageHas(/applied .* ago|application submitted/i)) return qpanel("You've already applied to this job.");
@@ -390,5 +411,100 @@
     if (window !== window.top) return;
     reply({ message: "One-click Apply started. Watch the panel on the page." });
     quickApply();
+  });
+  // ---------------- Autopilot (LinkedIn search results, Easy Apply only) ----------------
+  let lastAsk = "";
+  const jitter = (a, b) => sleep(a + Math.random() * (b - a));
+  const cardList = () => deepAll("li[data-occludable-job-id], li.jobs-search-results__list-item, div.job-card-container[data-job-id]")
+    .filter((c, i, arr) => arr.indexOf(c) === i);
+  const cardId = (c) => c.getAttribute("data-occludable-job-id") || c.getAttribute("data-job-id") || c.querySelector("[data-job-id]")?.getAttribute("data-job-id") || "";
+
+  async function closeEasyApply() {
+    const dlg = () => deepAll(".jobs-easy-apply-modal, [data-test-modal-id='easy-apply-modal'], .artdeco-modal, [role=dialog]").filter(visible)[0];
+    for (let i = 0; i < 3 && dlg(); i++) {
+      const x = deepAll("button[aria-label='Dismiss'], button[aria-label*='Dismiss'], .artdeco-modal__dismiss", dlg())[0] || findBtn(dlg(), /^(done|dismiss|close)$/i);
+      x?.click(); await sleep(800);
+      const discard = findBtn(document, /^discard$/i, /cancel/i); if (discard) { discard.click(); await sleep(800); }
+    }
+  }
+
+  async function openCard(card) {
+    card.scrollIntoView({ block: "center" }); await jitter(500, 1100);
+    const id = cardId(card);
+    const link = card.querySelector("a.job-card-list__title, a.job-card-container__link, a[href*='/jobs/view/']") || card;
+    const before = readJob().title;
+    link.click();
+    await waitFor(() => (id && location.href.includes(id)) || readJob().title !== before, 7000);
+    await jitter(1200, 2200); // let the description load
+  }
+
+  async function nextPage() {
+    const btn = deepAll("button[aria-label='View next page'], button.jobs-search-pagination__button--next")[0]
+      || (() => { const cur = deepAll(".artdeco-pagination__indicator--number.active, li.active[data-test-pagination-page-btn]")[0]; return cur?.nextElementSibling?.querySelector("button"); })();
+    if (!btn) return false;
+    btn.click(); await jitter(2500, 4000); return true;
+  }
+
+  async function autopilot() {
+    if (running) return; running = true; stopFlag = false; autoMode = true;
+    const s = await chrome.storage.local.get(["apMinScore", "apCount", "apDailyCap", "apSeen"]);
+    const minScore = Number(s.apMinScore ?? 70), cap = Number(s.apDailyCap ?? 25);
+    const day = new Date().toISOString().slice(0, 10);
+    const seen = new Set(s.apSeen || []);
+    const stats = { applied: 0, skipped: 0, low: 0 }; const log = [];
+    const head = () => (apHead = `Applied ${stats.applied} · Low match ${stats.low} · Needs you ${stats.skipped} · min ${minScore}%`);
+    try {
+      if (!/\/jobs\/(search|collections)/.test(location.pathname)) {
+        autoMode = false; return qpanel("Open LinkedIn Jobs search first. Search a role, turn on the Easy Apply filter, then start Autopilot.");
+      }
+      for (let page = 1; page <= 10 && !stopFlag; page++) {
+        let idx = 0;
+        while (!stopFlag) {
+          const cards = cardList(); if (idx >= cards.length) break;
+          const card = cards[idx++]; const id = cardId(card);
+          if (!id || seen.has(id)) continue;
+          seen.add(id); chrome.storage.local.set({ apSeen: [...seen].slice(-3000) });
+          if (/\bapplied\b/i.test(card.innerText || "")) continue;
+          const today = ((await chrome.storage.local.get("apCount")).apCount || {})[day] || 0;
+          if (today >= cap) { stopFlag = true; log.push(`Reached today's limit of ${cap}.`); break; }
+
+          head(); qpanel(`Opening job ${idx} on page ${page}…`);
+          await openCard(card); if (stopFlag) break;
+          const job = readJob();
+          if (!easyBtn()) { log.push(`Skipped (not Easy Apply): ${job.title}`); continue; }
+          const m = await callApi("/api/match", { quick: true, job });
+          if (m?.error) throw new Error(m.error);
+          if ((m?.score ?? 0) < minScore) { stats.low++; head(); log.push(`${m?.score ?? 0}% · skipped: ${job.title} @ ${job.company}`); continue; }
+
+          head(); qpanel(`${m.score}% match. Applying: ${job.title} @ ${job.company}`);
+          appId = null; outcome = null; lastAsk = "";
+          await linkedIn(true);
+          if (outcome === "applied") { stats.applied++; log.push(`✅ ${m.score}% · ${job.title} @ ${job.company}`); }
+          else {
+            stats.skipped++;
+            log.push(`🟧 ${job.title} @ ${job.company}: ${lastAsk || "couldn't finish"}`);
+            await closeEasyApply();
+            if (appId) await callApi("/api/applications", { id: appId, status: "saved", notes: `Autopilot paused: ${lastAsk || "needs you"}` });
+            else await callApi("/api/applications", { action: "save", source: "autopilot", job });
+          }
+          await closeEasyApply();
+          head(); await jitter(4000, 9000); // human pace between jobs
+        }
+        if (stopFlag || !(await nextPage())) break;
+      }
+    } catch (e) { log.push(`⚠️ ${String(e.message || e)}`); }
+    finally {
+      running = false; head();
+      const list = log.slice(-12).map((l) => `<li>${l.replace(/[<>&]/g, "")}</li>`).join("");
+      qpanel(`Autopilot finished.<ul style="margin:6px 0;padding-left:18px;max-height:220px;overflow:auto">${list}</ul>Jobs that need you are saved in your Tracker.`);
+      autoMode = false; apHead = "";
+    }
+  }
+
+  chrome.runtime.onMessage.addListener((msg, _s, reply) => {
+    if (msg.type !== "AP_AUTOPILOT") return;
+    if (window !== window.top) return;
+    reply({ message: "Autopilot started. Keep this tab open and in front." });
+    autopilot();
   });
 })();

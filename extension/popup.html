@@ -8,6 +8,11 @@
   <label>API URL<input id="api" placeholder="https://your-app.vercel.app"></label>
   <label>Extension token <small>(from Dashboard)</small><input id="token" placeholder="paste token"></label>
   <label>Resume PDF <small>(for file uploads)</small><input id="resume" type="file" accept="application/pdf"></label>
+  <label>Standard answers <small>(used when a form asks)</small><textarea id="answers" rows="5" placeholder="Notice period: 0 days, can join immediately
+Years with tools not in my resume: 0
+Willing to relocate: Yes
+Authorized to work in India: Yes
+Expected CTC: (leave out to be asked each time)"></textarea></label>
   <button id="save" class="btn primary">Save settings</button>
 </section>
 
@@ -21,6 +26,15 @@
 <button id="quick" class="btn primary block">⚡ One-click Apply</button>
 <label class="toggle muted sm"><input type="checkbox" id="autoSubmit"> Auto-submit when every answer is filled <small>(LinkedIn Easy Apply, Naukri, Indeed)</small></label>
 <button id="fill" class="btn block">Fill this page only</button>
+<details class="card" id="apBox">
+  <summary>🤖 Autopilot <small class="muted">(LinkedIn Easy Apply)</small></summary>
+  <div class="muted xs" style="margin:6px 0 8px">Open LinkedIn Jobs, search a role, turn on the Easy Apply filter, then press Start. It applies to strong matches one by one and saves the rest to your Tracker.</div>
+  <div class="grid2">
+    <label>Min match %<input id="apMin" type="number" min="0" max="100" value="70"></label>
+    <label>Max per day<input id="apCap" type="number" min="1" max="50" value="25"></label>
+  </div>
+  <button id="autopilot" class="btn primary block">Start Autopilot</button>
+</details>
 <div class="grid2">
   <button id="saveJob" class="btn">Save job</button>
   <button id="referral" class="btn">Write referral note</button>

@@ -6,15 +6,16 @@ let job = null;
 
 async function activeTab() { const [tab] = await chrome.tabs.query({ active: true, currentWindow: true }); return tab; }
 
-chrome.storage.local.get(["api", "token", "resumeName"], (s) => {
-  $("api").value = s.api || ""; $("token").value = s.token || "";
+chrome.storage.local.get(["api", "token", "resumeName", "answers", "apMinScore", "apDailyCap"], (s) => {
+  $("api").value = s.api || ""; $("token").value = s.token || ""; $("answers").value = s.answers || "";
+  if (s.apMinScore != null) $("apMin").value = s.apMinScore; if (s.apDailyCap != null) $("apCap").value = s.apDailyCap;
   if (!s.api || !s.token) $("settings").classList.remove("hidden");
   if (s.resumeName) status(`Resume saved: ${s.resumeName}`);
 });
 $("gear").onclick = () => $("settings").classList.toggle("hidden");
 
 $("save").onclick = async () => {
-  const data = { api: $("api").value.replace(/\/$/, ""), token: $("token").value.trim() };
+  const data = { api: $("api").value.replace(/\/$/, ""), token: $("token").value.trim(), answers: $("answers").value.trim() };
   const f = $("resume").files[0];
   if (f) {
     const b64 = await new Promise((r) => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsDataURL(f); });
@@ -47,6 +48,18 @@ $("quick").onclick = async () => {
     if (chrome.runtime.lastError) return status("Reload the page and try again.", "err");
     status(res?.message || "Started.", "ok");
     setTimeout(() => window.close(), 900);
+  });
+};
+
+$("autopilot").onclick = async () => {
+  const minScore = Math.max(0, Math.min(100, Number($("apMin").value) || 70));
+  const cap = Math.max(1, Math.min(50, Number($("apCap").value) || 25));
+  await chrome.storage.local.set({ apMinScore: minScore, apDailyCap: cap, autoSubmit: true });
+  const tab = await activeTab();
+  if (!/linkedin\.com\/jobs\/(search|collections)/.test(tab.url || "")) return status("Open LinkedIn Jobs search with the Easy Apply filter first.", "err");
+  chrome.tabs.sendMessage(tab.id, { type: "AP_AUTOPILOT" }, (res) => {
+    if (chrome.runtime.lastError) return status("Reload the LinkedIn page and try again.", "err");
+    status(res?.message || "Started.", "ok"); setTimeout(() => window.close(), 900);
   });
 };
 
