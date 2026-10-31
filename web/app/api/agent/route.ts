@@ -16,7 +16,7 @@ export async function OPTIONS() { return new Response(null, { status: 204 }); }
 
 export const POST = handle(async (req) => {
   const { user, db } = await requireUser(req);
-  const { url, pageTitle, fields, applicationId, answers } = (await req.json()) as { url: string; pageTitle: string; fields: Field[]; applicationId?: string; answers?: string };
+  const { url, pageTitle, fields, applicationId, answers, auto } = (await req.json()) as { url: string; pageTitle: string; fields: Field[]; applicationId?: string; answers?: string; auto?: boolean };
   if (!Array.isArray(fields) || !fields.length) throw new HttpError(400, "No form fields found on this page");
 
   const { data: prof } = await db.from("profiles").select("plan, profile_json").eq("id", user.id).single();
@@ -38,7 +38,14 @@ For each field return one action:
 - "ask_user" with a short reason when the answer is unknown, is salary/CTC, a password, a legal/sensitive question (disability, gender, caste, criminal record), or an essay the profile cannot honestly answer.
 Never invent experience. If STANDARD ANSWERS cover a question (notice period, CTC, relocation, work authorisation,
 years with a tool that is not in the profile), use them instead of asking. Skip fields that are irrelevant (search boxes, newsletter).
-Also guess "company" and "title" of the job from the page.
+${auto ? `AUTOPILOT MODE: the candidate is not watching, so answer every field you honestly can instead of asking:
+- yes/no or "years of experience with X": use the profile; a tool not in the profile is 0 years (or "No").
+- voluntary diversity/disability/veteran questions: pick "Prefer not to say"/"Decline to self-identify" if offered.
+- short "why do you want this job"/cover text: write 2 honest sentences from the profile.
+- current CTC for this fresher: 0. Expected CTC, notice period, relocation: from STANDARD ANSWERS.
+- anything else: pick the closest honest answer from PROFILE + STANDARD ANSWERS (for a select, the closest option; for a number, the closest figure).
+NEVER use "ask_user" except for a password or a non-resume file upload.
+` : ""}Also guess "company" and "title" of the job from the page.
 Return JSON: {"company": string, "title": string, "actions": [{"id": string, "action": string, "value": string, "reason": string}]}
 
 PAGE: ${pageTitle} ${url}
