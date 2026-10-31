@@ -10,6 +10,7 @@ export async function OPTIONS() { return new Response(null, { status: 204 }); }
 /*
  Two modes:
  1. Quick (free, deterministic, no quota): POST { quick: true, jobIds?: string[], feedJobIds?: string[] }
+    or POST { quick: true, job: {title, description} } -> { score, matched_skills, missing_skills, experience }
     -> { scores: { [id]: { score, matched_skills, missing_skills, experience } } }
  2. Full AI report: POST { jobId | feedJobId | job: {title, company, description} }
     -> { score, fit_score, matched_skills, missing_skills, experience, reasons, missing_keywords, tailored_bullets, cover_letter, jobId }
@@ -20,6 +21,12 @@ export const POST = handle(async (req) => {
   const body = await req.json();
   const { plan, profile } = await loadProfile(db, user.id);
   if (!profile) throw new HttpError(400, "Upload your resume first");
+
+  // Extension Autopilot: score the job on screen, free and instant (no AI, no quota)
+  if (body.quick && body.job) {
+    const j = body.job || {};
+    return Response.json(quickMatch(profile, { title: String(j.title || ""), description: String(j.description || "").slice(0, 12000) } as any));
+  }
 
   if (body.quick) {
     const scores: Record<string, ReturnType<typeof quickMatch>> = {};
