@@ -1,4 +1,6 @@
-// ApplyPilot content script: read form -> ask API -> fill -> highlight. Never submits.
+// ApplyPilot content script: read form -> ask API -> fill -> highlight.
+// "Fill this page" never submits. "One-click Apply" walks quick-apply flows (LinkedIn Easy Apply,
+// Naukri, Indeed and simple multi-step forms) and submits only when the user turned on Auto-submit.
 (() => {
   if (window.__applypilot) return; window.__applypilot = true;
 
@@ -16,15 +18,21 @@
     return clean(el.placeholder || el.name || el.id);
   }
 
-  function collect() {
-    const fields = [], seenRadio = new Set(); let i = 0;
-    document.querySelectorAll("input, textarea, select").forEach((el) => {
+  let seq = 0; // field ids stay unique across steps
+  function collect(root = document) {
+    const fields = [], seenRadio = new Set(); let i = seq;
+    root.querySelectorAll("input, textarea, select, [contenteditable=true]").forEach((el) => {
+      if (el.isContentEditable && el.tagName !== "INPUT" && el.tagName !== "TEXTAREA") {
+        if (!visible(el) || clean(el.innerText)) return;
+        const id = `ap${i++}`; el.dataset.apId = id;
+        fields.push({ id, label: labelFor(el) || lastQuestion(root), type: "textarea" }); return;
+      }
       const type = (el.type || el.tagName).toLowerCase();
       if (["hidden", "submit", "button", "search", "password", "image", "reset"].includes(type) || el.disabled) return;
       if (type !== "file" && !visible(el)) return;
       if (type === "radio") {
         if (!el.name || seenRadio.has(el.name)) return; seenRadio.add(el.name);
-        const group = [...document.querySelectorAll(`input[type=radio][name="${CSS.escape(el.name)}"]`)];
+        const group = [...root.querySelectorAll(`input[type=radio][name="${CSS.escape(el.name)}"]`)];
         const id = `ap${i++}`; group.forEach((g) => (g.dataset.apId = id));
         const q = el.closest("fieldset")?.querySelector("legend")?.innerText || labelFor(el.closest("fieldset") || el.parentElement?.parentElement || el);
         fields.push({ id, label: clean(q), type: "radio", options: group.map(labelFor), required: el.required });
@@ -36,7 +44,14 @@
       if (el.value && type !== "file" && type !== "checkbox") f.current = clean(el.value);
       fields.push(f);
     });
+    seq = i;
     return fields;
+  }
+
+  // Naukri's chatbot asks one question at a time as a chat bubble above the input.
+  function lastQuestion(root) {
+    const bubbles = [...root.querySelectorAll('[class*="botMsg"], [class*="bot-msg"], [class*="botItem"], li')].filter(visible);
+    return clean(bubbles.at(-1)?.innerText || "");
   }
 
   function setNative(el, value) {
@@ -73,6 +88,7 @@
           const opt = [...el.options].find((o) => clean(o.text).toLowerCase() === String(a.value).toLowerCase()) || [...el.options].find((o) => clean(o.text).toLowerCase().includes(String(a.value).toLowerCase()));
           if (opt) { setNative(el, opt.value); filled++; mark(el, "#2ecc71"); } else asks.push(a); continue;
         }
+        if (el.isContentEditable && a.value) { el.focus(); el.textContent = String(a.value); el.dispatchEvent(new InputEvent("input", { bubbles: true })); filled++; mark(el, "#2ecc71"); continue; }
         if (a.value != null && a.value !== "") { setNative(el, String(a.value)); filled++; mark(el, "#2ecc71"); }
       } catch { asks.push(a); }
     }
@@ -177,5 +193,202 @@
       reply({ message: `Filled ${filled}. ${asks.length} need you. Review, then click Submit yourself.` });
     });
     return true;
+  });
+  // ---------------- One-click Apply ----------------
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const human = () => sleep(700 + Math.random() * 900); // human pace between steps, keeps accounts safe
+  const callApi = (path, body, method) => new Promise((res) => chrome.runtime.sendMessage({ type: "AP_API", path, body, method }, res));
+  const bText = (b) => clean(b.innerText || b.value || b.getAttribute("aria-label") || "");
+  const buttons = (root) => [...root.querySelectorAll("button, input[type=submit], a[role=button]")].filter(visible).filter((b) => !b.disabled && b.getAttribute("aria-disabled") !== "true");
+  const findBtn = (root, re, not) => buttons(root).find((b) => re.test(bText(b)) && !(not && not.test(bText(b))));
+  async function waitFor(fn, ms = 8000) { const t = Date.now(); while (Date.now() - t < ms) { const v = fn(); if (v) return v; await sleep(300); } return null; }
+  const pageHas = (re, root = document.body) => re.test(root.innerText || "");
+  const host = location.hostname;
+  const site = /linkedin\.com$/.test(host) ? "linkedin" : /naukri\.com$/.test(host) ? "naukri" : /indeed\./.test(host) ? "indeed" : "generic";
+
+  let qp = null;
+  function qpanel(html, buttonsHtml = "") {
+    if (!qp || !document.body.contains(qp)) {
+      qp = document.createElement("div"); qp.id = "ap-qp";
+      qp.style.cssText = "position:fixed;right:16px;bottom:16px;z-index:2147483647;background:#141a2a;color:#e8ecf4;border:1px solid #33405e;border-radius:12px;padding:14px;width:300px;font:13px system-ui;box-shadow:0 8px 30px #0008";
+      document.body.appendChild(qp);
+    }
+    qp.innerHTML = `<b>ApplyPilot · One-click Apply</b><div style="margin-top:6px">${html}</div>${buttonsHtml}
+      <button data-qp="x" style="margin-top:6px;width:100%;padding:6px;border:1px solid #33405e;border-radius:8px;background:none;color:#e8ecf4;cursor:pointer">Close</button>`;
+    qp.querySelector('[data-qp="x"]').onclick = () => { stopFlag = true; qp.remove(); };
+    return qp;
+  }
+  const bigBtn = (id, label, color = "#4f7cff") => `<button data-qp="${id}" style="margin-top:8px;width:100%;padding:8px;border:0;border-radius:8px;background:${color};color:#fff;font-weight:700;cursor:pointer">${label}</button>`;
+
+  let appId = null, stopFlag = false, running = false;
+
+  async function track(status) {
+    if (!appId) {
+      const r = await callApi("/api/applications", { action: "save", source: "one-click", job: readJob() });
+      appId = r?.id || null;
+    }
+    if (appId) await callApi("/api/applications", { id: appId, status });
+  }
+
+  async function fillStep(root) {
+    const fields = collect(root).filter((f) => !(f.current && f.required !== true && f.type !== "select"));
+    if (!fields.length) return { filled: 0, asks: [] };
+    const res = await callApi("/api/agent", { url: location.href.split("#")[0], pageTitle: document.title, fields, applicationId: appId || undefined });
+    if (!res || res.error) throw new Error(res?.error || "API error");
+    appId = res.applicationId || appId;
+    return apply(res.actions || []);
+  }
+
+  function needYou(asks, why) {
+    const list = asks.length ? "<ul style='margin:4px 0;padding-left:18px'>" + asks.slice(0, 6).map((a) => `<li>${a.reason || a.label || a.id}</li>`).join("") + "</ul>" : "";
+    const p = qpanel(`🟧 ${why || "A few answers need you"}:${list}Answer the orange fields, then press Continue.`, bigBtn("go", "Continue"));
+    p.querySelector('[data-qp="go"]').onclick = () => quickApply();
+  }
+
+  async function finishedOk() {
+    await track("applied");
+    const { apCount = {} } = await chrome.storage.local.get("apCount");
+    const day = new Date().toISOString().slice(0, 10); apCount[day] = (apCount[day] || 0) + 1;
+    chrome.storage.local.set({ apCount: { [day]: apCount[day] } });
+    qpanel(`✅ Applied! Tracked in your ApplyPilot tracker. (${apCount[day]} today)`);
+  }
+
+  async function atSubmit(btn, autoSubmit, root) {
+    if (!autoSubmit) {
+      mark(btn, "#4f7cff", "ApplyPilot: review, then submit");
+      btn.scrollIntoView({ block: "center", behavior: "smooth" });
+      const p = qpanel("📝 All steps filled. Review the last screen, then submit.", bigBtn("sub", "Submit now", "#2ecc71"));
+      p.querySelector('[data-qp="sub"]').onclick = async () => { btn.click(); await afterSubmit(root); };
+      await track("filled");
+      return;
+    }
+    await human(); btn.click(); await afterSubmit(root);
+  }
+
+  async function afterSubmit(root) {
+    const ok = await waitFor(() => pageHas(/application (was )?sent|successfully applied|application submitted|you applied|thank you for applying|applied successfully|your application has been/i), 10000);
+    if (ok) return finishedOk();
+    const err = root && document.body.contains(root) && root.querySelector('.artdeco-inline-feedback--error, [role=alert], .error, [aria-invalid=true]');
+    if (err) return needYou([], "The site flagged something before submitting");
+    qpanel("Submitted. I couldn't see a confirmation message, so check the page.", bigBtn("ok", "Mark as applied", "#2ecc71"))
+      .querySelector('[data-qp="ok"]').onclick = finishedOk;
+  }
+
+  // Walks a multi-step form inside `getRoot()` until the final submit button.
+  async function stepLoop(getRoot, nextRe, submitRe, autoSubmit) {
+    let lastSig = "";
+    for (let step = 1; step <= 15 && !stopFlag; step++) {
+      const root = getRoot(); if (!root) return qpanel("The application window closed.");
+      qpanel(`Step ${step}: filling…`);
+      const { filled, asks } = await fillStep(root);
+      if (asks.length) return needYou(asks);
+      await human();
+      const submit = findBtn(root, submitRe);
+      if (submit) return atSubmit(submit, autoSubmit, root);
+      const next = findBtn(root, nextRe, /back|previous|cancel|discard|save for later/i);
+      if (!next) return needYou([], "I couldn't find the next button");
+      const sig = (root.innerText || "").slice(0, 600);
+      next.click();
+      await waitFor(() => (getRoot()?.innerText || "").slice(0, 600) !== sig, 6000);
+      await sleep(400);
+      const r2 = getRoot();
+      const err = r2?.querySelector('.artdeco-inline-feedback--error, [role=alert]:not(:empty), [aria-invalid=true]');
+      const nowSig = (r2?.innerText || "").slice(0, 600);
+      if (err && nowSig === sig) return needYou([], "The site says something is missing");
+      if (nowSig === lastSig && nowSig === sig) return needYou([], "I'm stuck on this step");
+      lastSig = sig;
+      if (filled === 0 && step > 12) break;
+    }
+    if (!stopFlag) needYou([], "This form has more steps than expected");
+  }
+
+  async function linkedIn(autoSubmit) {
+    const dialog = () => document.querySelector(".jobs-easy-apply-modal, [data-test-modal-id='easy-apply-modal'], .artdeco-modal[role=dialog]");
+    if (!dialog()) {
+      const btn = findBtn(document, /easy apply/i);
+      if (!btn) {
+        if (findBtn(document, /^apply/i)) return qpanel("This job applies on the company's own site. Click Apply there, then use “Fill this page”.");
+        if (pageHas(/applied .* ago|application submitted/i)) return qpanel("You've already applied to this job.");
+        return qpanel("Open a LinkedIn job with an Easy Apply button first.");
+      }
+      btn.click();
+      if (!(await waitFor(dialog))) return qpanel("Easy Apply didn't open. Try again.");
+      await human();
+    }
+    return stepLoop(dialog, /^(next|continue|review|continue to next step|review your application)$/i, /submit application/i, autoSubmit);
+  }
+
+  async function naukri(autoSubmit) {
+    const drawer = () => document.querySelector('[class*="chatbot_Drawer"], [class*="chatbot_drawer"], [class*="chatbot"]');
+    if (!drawer()) {
+      if (pageHas(/^\s*applied\s*$/im) || findBtn(document, /^applied$/i)) return qpanel("You've already applied to this job.");
+      const btn = findBtn(document, /^(apply|easy apply|1-click apply)$/i) || document.querySelector("#apply-button");
+      if (!btn) {
+        if (findBtn(document, /apply on company site/i)) return qpanel("This job applies on the company's own site. Open it there and use “Fill this page”.");
+        return qpanel("Open a Naukri job page with an Apply button first.");
+      }
+      if (!autoSubmit) {
+        mark(btn, "#4f7cff"); btn.scrollIntoView({ block: "center" });
+        const p = qpanel("On Naukri, the Apply button sends your Naukri profile right away.", bigBtn("sub", "Apply now", "#2ecc71"));
+        p.querySelector('[data-qp="sub"]').onclick = () => { chrome.storage.local.set({ apNaukriOk: Date.now() }); btn.click(); naukriAfter(); };
+        return;
+      }
+      await human(); btn.click();
+    }
+    return naukriAfter();
+  }
+
+  async function naukriAfter() {
+    const drawer = () => document.querySelector('[class*="chatbot_Drawer"], [class*="chatbot_drawer"], [class*="chatbot"]');
+    const state = await waitFor(() => (pageHas(/successfully applied|applied successfully|you have applied/i) ? "ok" : drawer() ? "bot" : null), 10000);
+    if (state === "ok") return finishedOk();
+    if (state !== "bot") return qpanel("Clicked Apply. I couldn't see a confirmation, so check the page.", bigBtn("ok", "Mark as applied", "#2ecc71"));
+    // Recruiter questions, one at a time
+    for (let q = 1; q <= 12 && !stopFlag; q++) {
+      const d = drawer(); if (!d) break;
+      if (pageHas(/successfully applied|applied successfully/i)) return finishedOk();
+      qpanel(`Answering recruiter question ${q}…`);
+      const { asks } = await fillStep(d);
+      if (asks.length) return needYou(asks, "Naukri asked something only you can answer");
+      await human();
+      const save = findBtn(d, /^(save|submit|send|next)$/i) || d.querySelector('[class*="sendMsg"]');
+      if (!save) return needYou([], "I couldn't find the Save button in Naukri's chat");
+      const before = (d.innerText || "").length; save.click();
+      await waitFor(() => !drawer() || (drawer().innerText || "").length !== before || pageHas(/successfully applied/i), 8000);
+      await sleep(600);
+    }
+    if (pageHas(/successfully applied|applied successfully|you have applied/i)) return finishedOk();
+    if (!drawer()) return qpanel("Done answering. Check the page for Naukri's confirmation.", bigBtn("ok", "Mark as applied", "#2ecc71"));
+  }
+
+  async function generic(autoSubmit) {
+    // Indeed Apply and simple one-page / multi-step ATS forms (Greenhouse, Lever, Ashby…)
+    if (site === "indeed" && !document.querySelector("input, textarea, select")) {
+      const btn = findBtn(document, /apply now|easily apply|^apply$/i, /company site/i);
+      if (!btn) return qpanel("Open an Indeed job with an Apply now button first.");
+      btn.click(); return qpanel("Indeed opened the application. Press One-click Apply again on that page.");
+    }
+    const form = () => [...document.querySelectorAll("form")].filter(visible).sort((a, b) => b.querySelectorAll("input,textarea,select").length - a.querySelectorAll("input,textarea,select").length)[0] || document.body;
+    return stepLoop(form, /^(next|continue|review|save and continue|review your application)$/i, /submit( your)? application|^submit$|send application|^apply$/i, autoSubmit);
+  }
+
+  async function quickApply() {
+    if (running) return; running = true; stopFlag = false;
+    try {
+      const { autoSubmit = false, apCount = {}, apDailyCap = 25 } = await chrome.storage.local.get(["autoSubmit", "apCount", "apDailyCap"]);
+      const today = apCount[new Date().toISOString().slice(0, 10)] || 0;
+      if (autoSubmit && today >= apDailyCap) return qpanel(`You've hit today's limit of ${apDailyCap} auto-submitted applications. It protects your accounts from being flagged. Try again tomorrow.`);
+      if (site === "linkedin") await linkedIn(autoSubmit);
+      else if (site === "naukri") await naukri(autoSubmit);
+      else await generic(autoSubmit);
+    } catch (e) { qpanel(`⚠️ ${String(e.message || e)}`); }
+    finally { running = false; }
+  }
+
+  chrome.runtime.onMessage.addListener((msg, _s, reply) => {
+    if (msg.type !== "AP_QUICK") return;
+    if (window !== window.top) return;
+    reply({ message: "One-click Apply started. Watch the panel on the page." });
+    quickApply();
   });
 })();

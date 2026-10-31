@@ -37,6 +37,19 @@ async function readJob() {
   $("team").innerHTML = (job.hiringTeam || []).map((p) => `<a class="chip accent" href="${esc(p.profileUrl)}" target="_blank" title="${esc(p.title)}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M20 21a8 8 0 1 0-16 0M12 13a4 4 0 1 0 0-8 4 4 0 0 0 0 8z"/></svg>${esc(p.name)}</a>`).join("");
 })();
 
+const footText = (on) => { $("foot").textContent = on ? "Auto-submit is on: quick-apply jobs are sent once every answer is filled. Max 25 a day." : "Auto-submit is off: you review the last step and press Submit."; };
+chrome.storage.local.get(["autoSubmit"], (s) => { $("autoSubmit").checked = !!s.autoSubmit; footText(!!s.autoSubmit); });
+$("autoSubmit").onchange = (e) => { chrome.storage.local.set({ autoSubmit: e.target.checked }); footText(e.target.checked); };
+
+$("quick").onclick = async () => {
+  const tab = await activeTab();
+  chrome.tabs.sendMessage(tab.id, { type: "AP_QUICK" }, (res) => {
+    if (chrome.runtime.lastError) return status("Reload the page and try again.", "err");
+    status(res?.message || "Started.", "ok");
+    setTimeout(() => window.close(), 900);
+  });
+};
+
 $("fill").onclick = async () => {
   const tab = await activeTab();
   status("Reading the form…");

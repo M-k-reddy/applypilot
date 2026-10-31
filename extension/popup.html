@@ -18,7 +18,9 @@
   <div id="team" class="team"></div>
 </section>
 
-<button id="fill" class="btn primary block">Fill this page</button>
+<button id="quick" class="btn primary block">⚡ One-click Apply</button>
+<label class="toggle muted sm"><input type="checkbox" id="autoSubmit"> Auto-submit when every answer is filled <small>(LinkedIn Easy Apply, Naukri, Indeed)</small></label>
+<button id="fill" class="btn block">Fill this page only</button>
 <div class="grid2">
   <button id="saveJob" class="btn">Save job</button>
   <button id="referral" class="btn">Write referral note</button>
@@ -31,6 +33,6 @@
 
 <div id="status" class="status" role="status"></div>
 <div id="out"></div>
-<footer class="muted xs">You always click Submit. Nothing is sent for you.</footer>
+<footer id="foot" class="muted xs">Auto-submit is off: you review the last step and press Submit.</footer>
 <script src="popup.js"></script>
 </body></html>
