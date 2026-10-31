@@ -242,7 +242,7 @@
     const fields = collect(root).filter((f) => !(f.current && f.required !== true && f.type !== "select"));
     if (!fields.length) return { filled: 0, asks: [], none: true };
     const { answers = "" } = await chrome.storage.local.get("answers");
-    const res = await callApi("/api/agent", { url: location.href.split("#")[0], pageTitle: document.title, fields, applicationId: appId || undefined, answers });
+    const res = await callApi("/api/agent", { url: location.href.split("#")[0], pageTitle: document.title, fields, applicationId: appId || undefined, answers, auto: autoMode });
     if (!res || res.error) throw new Error(res?.error || "API error");
     appId = res.applicationId || appId;
     return apply(res.actions || []);
@@ -464,62 +464,79 @@
     btn.click(); await waitFor(() => cardList().length, 6000); await sleep(1200); return true;
   }
 
+  // Autopilot: 1) scan this page and score every Easy Apply job, 2) show the list, 3) apply to every match on its own. No clicks needed.
+  const escH = (t) => String(t || "").replace(/[<>&"]/g, (c) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;" }[c]));
+  function listHtml(queue, note) {
+    const icon = { queued: "⏳", applying: "▶️", applied: "✅", needs: "🟧", failed: "⚠️" };
+    const rows = queue.map((q) => `<li style="margin:3px 0">${icon[q.state] || ""} <b>${q.score}%</b> ${escH(q.job.title)} <span style="color:#9fb0d0">@ ${escH(q.job.company)}</span>${q.note ? `<div style="color:#ffb86b;font-size:11px">${escH(q.note)}</div>` : ""}</li>`).join("");
+    return `${note}<ul style="margin:6px 0;padding-left:4px;list-style:none;max-height:260px;overflow:auto">${rows || "<li>No matches on this page.</li>"}</ul>`;
+  }
+
   async function autopilot() {
     if (running) return; running = true; stopFlag = false; autoMode = true;
     const s = await chrome.storage.local.get(["apMinScore", "apCount", "apDailyCap", "apSeen"]);
     const minScore = Number(s.apMinScore ?? 70), cap = Number(s.apDailyCap ?? 25);
     const day = new Date().toISOString().slice(0, 10);
     const seen = new Set(s.apSeen || []);
-    const stats = { applied: 0, skipped: 0, low: 0 }; const log = []; let early = false;
-    const head = () => (apHead = `Applied ${stats.applied} · Low match ${stats.low} · Needs you ${stats.skipped} · min ${minScore}%`);
+    const stats = { applied: 0, skipped: 0, low: 0 }; const done = []; let early = false;
+    const head = () => (apHead = `Applied ${stats.applied} · Needs you ${stats.skipped} · Low match ${stats.low} · min ${minScore}%`);
+    const todayCount = async () => ((await chrome.storage.local.get("apCount")).apCount || {})[day] || 0;
     try {
       if (!/\/jobs\/(search|collections)/.test(location.pathname)) {
         early = true; autoMode = false; return qpanel("Open LinkedIn Jobs search first. Search a role, turn on the Easy Apply filter, then start Autopilot.");
       }
       await waitFor(() => cardList().length, 6000);
       if (!cardList().length) { early = true; autoMode = false; apHead = ""; return qpanel("I couldn't find the job list on this page. Make sure the left side shows job cards, scroll it once, then press Start again. If it still fails, send me a screenshot."); }
+
       for (let page = 1; page <= 10 && !stopFlag; page++) {
-        let idx = 0; log.push(`Page ${page}: ${cardList().length} jobs found`);
-        while (!stopFlag) {
-          const cards = cardList(); if (idx >= cards.length) break;
-          const card = cards[idx++]; const id = cardId(card);
-          if (!id || seen.has(id)) continue;
-          seen.add(id); chrome.storage.local.set({ apSeen: [...seen].slice(-3000) });
-
-          const today = ((await chrome.storage.local.get("apCount")).apCount || {})[day] || 0;
-          if (today >= cap) { stopFlag = true; log.push(`Reached today's limit of ${cap}.`); break; }
-
-          head(); qpanel(`Opening job ${idx} on page ${page}…`);
+        if ((await todayCount()) >= cap) break;
+        // 1) Scan: open each card, score it, build the list
+        const queue = []; const ids = cardList().map(cardId).filter((id) => id && !seen.has(id));
+        for (let i = 0; i < ids.length && !stopFlag; i++) {
+          const card = cardList().find((c) => cardId(c) === ids[i]); if (!card) continue;
+          head(); qpanel(listHtml(queue, `🔎 Page ${page}: checking job ${i + 1} of ${ids.length}…`));
           await openCard(card); if (stopFlag) break;
-          if (/\bapplied\b/i.test(card.innerText || "")) { log.push(`Already applied: ${clean(card.innerText).slice(0, 50)}`); continue; }
+          if (/\bapplied\b/i.test(card.innerText || "") || !easyBtn()) { seen.add(ids[i]); continue; }
           const job = readJob();
-          if (!easyBtn()) { log.push(`Skipped (not Easy Apply): ${job.title}`); continue; }
           const m = await callApi("/api/match", { quick: true, job });
           if (m?.error) throw new Error(m.error);
-          if ((m?.score ?? 0) < minScore) { stats.low++; head(); log.push(`${m?.score ?? 0}% · skipped: ${job.title} @ ${job.company}`); continue; }
-
-          head(); qpanel(`${m.score}% match. Applying: ${job.title} @ ${job.company}`);
+          const score = m?.score ?? 0;
+          if (score < minScore) { stats.low++; seen.add(ids[i]); continue; }
+          queue.push({ id: ids[i], job, score, state: "queued" });
+        }
+        queue.sort((a, b) => b.score - a.score);
+        // 2) Show the list, 3) apply to each one automatically
+        head(); qpanel(listHtml(queue, `📋 ${queue.length} matches on page ${page}. Applying to all now…`)); await sleep(2500);
+        for (const q of queue) {
+          if (stopFlag) break;
+          if ((await todayCount()) >= cap) { q.note = `Today's limit of ${cap} reached`; stopFlag = true; break; }
+          q.state = "applying"; head(); qpanel(listHtml(queue, `Applying ${queue.indexOf(q) + 1} of ${queue.length}…`));
+          const card = cardList().find((c) => cardId(c) === q.id);
+          if (!card) { q.state = "failed"; q.note = "Card disappeared"; continue; }
+          await openCard(card);
           appId = null; outcome = null; lastAsk = "";
-          await linkedIn(true);
-          if (outcome === "applied") { stats.applied++; log.push(`✅ ${m.score}% · ${job.title} @ ${job.company}`); }
+          try { await linkedIn(true); } catch (e) { lastAsk = String(e.message || e); }
+          seen.add(q.id); chrome.storage.local.set({ apSeen: [...seen].slice(-3000) });
+          if (outcome === "applied") { q.state = "applied"; stats.applied++; }
           else {
-            stats.skipped++;
-            log.push(`🟧 ${job.title} @ ${job.company}: ${lastAsk || "couldn't finish"}`);
+            q.state = "needs"; q.note = lastAsk || "couldn't finish"; stats.skipped++;
             await closeEasyApply();
-            if (appId) await callApi("/api/applications", { id: appId, status: "saved", notes: `Autopilot paused: ${lastAsk || "needs you"}` });
-            else await callApi("/api/applications", { action: "save", source: "autopilot", job });
+            if (appId) await callApi("/api/applications", { id: appId, status: "saved", notes: `Autopilot paused: ${q.note}` });
+            else await callApi("/api/applications", { action: "save", source: "autopilot", job: q.job });
           }
           await closeEasyApply();
-          head(); await jitter(1500, 3000); // short pause between jobs
+          head(); qpanel(listHtml(queue, `Applying… ${stats.applied} sent so far`));
+          await jitter(1500, 3000);
         }
+        done.push(...queue);
+        chrome.storage.local.set({ apSeen: [...seen].slice(-3000) });
         if (stopFlag || !(await nextPage())) break;
       }
-    } catch (e) { log.push(`⚠️ ${String(e.message || e)}`); }
+    } catch (e) { done.push({ score: 0, job: { title: "⚠️ " + String(e.message || e), company: "" }, state: "failed" }); }
     finally {
       running = false; if (early) return;
       head();
-      const list = log.slice(-12).map((l) => `<li>${l.replace(/[<>&]/g, "")}</li>`).join("");
-      qpanel(`Autopilot finished.<ul style="margin:6px 0;padding-left:18px;max-height:220px;overflow:auto">${list}</ul>Jobs that need you are saved in your Tracker.`);
+      qpanel(listHtml(done, `🏁 Autopilot finished. ${stats.applied} applied. Jobs marked 🟧 are saved in your Tracker.`));
       autoMode = false; apHead = "";
     }
   }

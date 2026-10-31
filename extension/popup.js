@@ -6,8 +6,11 @@ let job = null, loadedToken = "";
 
 async function activeTab() { const [tab] = await chrome.tabs.query({ active: true, currentWindow: true }); return tab; }
 
-chrome.storage.local.get(["api", "token", "resumeName", "answers", "apMinScore", "apDailyCap"], (s) => {
-  $("api").value = s.api || ""; $("token").value = s.token || ""; loadedToken = s.token || ""; $("answers").value = s.answers || "";
+const FORM = [["f_notice","Notice period"],["f_exp","Total years of work experience"],["f_cur","Current CTC (INR per year)"],["f_expctc","Expected CTC (INR per year)"],["f_city","Current city"],["f_reloc","Willing to relocate"],["f_mode","Work mode accepted"],["f_auth","Authorized to work in India"],["f_visa","Requires visa sponsorship"],["f_start","Earliest start date"],["f_degree","Highest degree"],["f_grad","Graduation year"],["f_cgpa","CGPA / percentage"],["f_phone","Phone"],["f_li","LinkedIn URL"],["f_gh","GitHub / portfolio URL"],["f_lang","Languages known"],["f_div","Gender / diversity / disability / veteran questions"],["f_unk","Years with any tool or skill not in the resume"],["f_shift","Comfortable with rotational / night shifts"]];
+const composeAnswers = (form, extra) => FORM.map(([id, label]) => form[id] !== undefined && form[id] !== "" ? `${label}: ${form[id]}` : "").filter(Boolean).join("\n") + (extra ? `\n${extra}` : "");
+chrome.storage.local.get(["api", "token", "resumeName", "answersExtra", "answersForm", "apMinScore", "apDailyCap"], (s) => {
+  $("api").value = s.api || ""; $("token").value = s.token || ""; loadedToken = s.token || ""; $("answers").value = s.answersExtra ?? "";
+  const f = s.answersForm || {}; FORM.forEach(([id]) => { if (f[id] !== undefined) $(id).value = f[id]; });
   if (s.apMinScore != null) $("apMin").value = s.apMinScore; if (s.apDailyCap != null) $("apCap").value = s.apDailyCap;
   if (!s.api || !s.token) $("settings").classList.remove("hidden");
   if (s.resumeName) status(`Resume saved: ${s.resumeName}`);
@@ -15,7 +18,10 @@ chrome.storage.local.get(["api", "token", "resumeName", "answers", "apMinScore",
 $("gear").onclick = () => $("settings").classList.toggle("hidden");
 
 $("save").onclick = async () => {
-  const data = { api: $("api").value.replace(/\/$/, ""), token: $("token").value.trim(), answers: $("answers").value.trim() };
+  const answersForm = Object.fromEntries(FORM.map(([id]) => [id, $(id).value.trim()]));
+  if (!answersForm.f_expctc) { $("f_expctc").focus(); return status("Add your Expected CTC so Autopilot never has to ask.", "err"); }
+  const answersExtra = $("answers").value.trim();
+  const data = { api: $("api").value.replace(/\/$/, ""), token: $("token").value.trim(), answers: composeAnswers(answersForm, answersExtra), answersForm, answersExtra };
   if (data.token === loadedToken) delete data.token; // unchanged: keep the auto-refreshed one
   else { data.access = ""; data.accessExp = 0; }    // new token: sign in fresh with it
   const f = $("resume").files[0];
@@ -54,6 +60,8 @@ $("quick").onclick = async () => {
 };
 
 $("autopilot").onclick = async () => {
+  const { answersForm } = await chrome.storage.local.get("answersForm");
+  if (!answersForm?.f_expctc) { $("settings").classList.remove("hidden"); return status("Fill Application answers (Expected CTC at least) and Save first.", "err"); }
   const minScore = Math.max(0, Math.min(100, Number($("apMin").value) || 70));
   const cap = Math.max(1, Math.min(50, Number($("apCap").value) || 25));
   await chrome.storage.local.set({ apMinScore: minScore, apDailyCap: cap, autoSubmit: true });

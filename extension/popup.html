@@ -8,11 +8,32 @@
   <label>API URL<input id="api" placeholder="https://your-app.vercel.app"></label>
   <label>Extension token <small>(Dashboard → Generate extension token)</small><input id="token" placeholder="paste token"></label>
   <label>Resume PDF <small>(for file uploads)</small><input id="resume" type="file" accept="application/pdf"></label>
-  <label>Standard answers <small>(used when a form asks)</small><textarea id="answers" rows="5" placeholder="Notice period: 0 days, can join immediately
-Years with tools not in my resume: 0
-Willing to relocate: Yes
-Authorized to work in India: Yes
-Expected CTC: (leave out to be asked each time)"></textarea></label>
+  <details class="card" id="formBox" open style="padding:12px">
+    <summary>📝 Application answers <small class="muted">(Autopilot never asks you)</small></summary>
+    <div class="grid2">
+      <label>Notice period<select id="f_notice"><option>Immediate (0 days)</option><option>15 days</option><option>30 days</option><option>60 days</option><option>90 days</option></select></label>
+      <label>Total experience (yrs)<input id="f_exp" type="number" min="0" step="0.5" value="0"></label>
+      <label>Current CTC (₹/yr)<input id="f_cur" type="number" min="0" value="0"></label>
+      <label>Expected CTC (₹/yr) *<input id="f_expctc" type="number" min="0" placeholder="e.g. 600000"></label>
+      <label>Current city<input id="f_city" placeholder="Hyderabad"></label>
+      <label>Willing to relocate<select id="f_reloc"><option>Yes</option><option>No</option></select></label>
+      <label>Work mode OK<select id="f_mode"><option>Any (Remote, Hybrid, On-site)</option><option>Remote only</option><option>Hybrid or Remote</option><option>On-site</option></select></label>
+      <label>Authorized to work in India<select id="f_auth"><option>Yes</option><option>No</option></select></label>
+      <label>Need visa sponsorship<select id="f_visa"><option>No</option><option>Yes</option></select></label>
+      <label>Earliest start<input id="f_start" placeholder="Immediately"></label>
+      <label>Degree<input id="f_degree" placeholder="B.Tech CSE (AI&ML)"></label>
+      <label>Graduation year<input id="f_grad" placeholder="2026"></label>
+      <label>CGPA / %<input id="f_cgpa" placeholder="8.49"></label>
+      <label>Phone<input id="f_phone" placeholder="+91..."></label>
+      <label>LinkedIn URL<input id="f_li" placeholder="https://linkedin.com/in/..."></label>
+      <label>GitHub / Portfolio<input id="f_gh" placeholder="https://github.com/..."></label>
+      <label>Languages<input id="f_lang" placeholder="English, Telugu, Hindi"></label>
+      <label>Gender / diversity<select id="f_div"><option>Prefer not to say</option><option>Male</option><option>Female</option><option>Non-binary</option></select></label>
+      <label>Tools not on resume<select id="f_unk"><option>0 years</option><option>1 year</option></select></label>
+      <label>Comfortable with shifts<select id="f_shift"><option>Yes</option><option>No</option></select></label>
+    </div>
+    <label>Other answers <small>(anything else, one per line)</small><textarea id="answers" rows="3" placeholder="Bond OK: Yes&#10;Have a laptop: Yes"></textarea></label>
+  </details>
   <button id="save" class="btn primary">Save settings</button>
 </section>
 
@@ -28,7 +49,7 @@ Expected CTC: (leave out to be asked each time)"></textarea></label>
 <button id="fill" class="btn block">Fill this page only</button>
 <details class="card" id="apBox">
   <summary>🤖 Autopilot <small class="muted">(LinkedIn Easy Apply)</small></summary>
-  <div class="muted xs" style="margin:6px 0 8px">Open LinkedIn Jobs, search a role, turn on the Easy Apply filter, then press Start. It applies to strong matches one by one and saves the rest to your Tracker.</div>
+  <div class="muted xs" style="margin:6px 0 8px">Open LinkedIn Jobs, search a role, turn on the Easy Apply filter, then press Start. It scans the page, shows you the matching jobs, then applies to all of them by itself. No clicks needed.</div>
   <div class="grid2">
     <label>Min match %<input id="apMin" type="number" min="0" max="100" value="70"></label>
     <label>Max per day<input id="apCap" type="number" min="1" max="50" value="25"></label>

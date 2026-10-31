@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "ApplyPilot",
-  "version": "0.4.2",
+  "version": "0.4.4",
   "description": "Job-search copilot: Autopilot and one-click apply on LinkedIn Easy Apply, Naukri and Indeed, fills any application, saves jobs, finds the hiring contact and drafts referral notes.",
   "permissions": [
     "storage",
