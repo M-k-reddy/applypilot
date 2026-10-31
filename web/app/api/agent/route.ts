@@ -16,7 +16,7 @@ export async function OPTIONS() { return new Response(null, { status: 204 }); }
 
 export const POST = handle(async (req) => {
   const { user, db } = await requireUser(req);
-  const { url, pageTitle, fields, applicationId } = (await req.json()) as { url: string; pageTitle: string; fields: Field[]; applicationId?: string };
+  const { url, pageTitle, fields, applicationId, answers } = (await req.json()) as { url: string; pageTitle: string; fields: Field[]; applicationId?: string; answers?: string };
   if (!Array.isArray(fields) || !fields.length) throw new HttpError(400, "No form fields found on this page");
 
   const { data: prof } = await db.from("profiles").select("plan, profile_json").eq("id", user.id).single();
@@ -36,12 +36,14 @@ For each field return one action:
 - "check" with value "true"/"false" for checkbox/radio
 - "upload_resume" for file inputs asking for a resume/CV
 - "ask_user" with a short reason when the answer is unknown, is salary/CTC, a password, a legal/sensitive question (disability, gender, caste, criminal record), or an essay the profile cannot honestly answer.
-Never invent experience. Skip fields that are irrelevant (search boxes, newsletter).
+Never invent experience. If STANDARD ANSWERS cover a question (notice period, CTC, relocation, work authorisation,
+years with a tool that is not in the profile), use them instead of asking. Skip fields that are irrelevant (search boxes, newsletter).
 Also guess "company" and "title" of the job from the page.
 Return JSON: {"company": string, "title": string, "actions": [{"id": string, "action": string, "value": string, "reason": string}]}
 
 PAGE: ${pageTitle} ${url}
 PROFILE: ${JSON.stringify(prof.profile_json)}
+STANDARD ANSWERS (written by the candidate): ${String(answers || "none").slice(0, 2000)}
 FIELDS: ${JSON.stringify(fields.slice(0, 120))}`);
 
   const actions = (out.actions || []).filter((a) => a.action !== "submit");
