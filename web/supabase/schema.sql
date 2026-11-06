@@ -115,6 +115,9 @@ alter table public.jobs add column if not exists ats_score int;
 -- Board Auto-Apply (v2.3): board the runner applied on; questions it could not answer.
 alter table public.applications add column if not exists board text;
 alter table public.profiles add column if not exists unanswered jsonb not null default '[]'::jsonb;
+-- Zero-click auto-apply (v2.4): settings edited on the website; per-board sign-in status reported by the extension.
+alter table public.profiles add column if not exists auto_settings jsonb not null default '{}'::jsonb;
+alter table public.profiles add column if not exists board_status jsonb not null default '{}'::jsonb;
 
 -- v1 statuses → v2 Kanban columns
 update public.applications set status = 'saved' where status = 'filled';

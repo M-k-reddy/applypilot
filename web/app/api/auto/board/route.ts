@@ -3,6 +3,7 @@ import { askJSON } from "@/lib/llm";
 import { promptProfile, profileText } from "@/lib/profile";
 import { assertQuota, recordUsage } from "@/lib/quota";
 import { requireProfile, loadProfile, str, httpUrl, capWords, inventedNumbers } from "@/lib/server";
+import { normalizeAutoSettings, normalizeBoardStatus } from "@/lib/autosettings";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -16,13 +17,13 @@ const normKey = (s: string) => String(s || "").toLowerCase().replace(/[^a-z0-9]/
 const urlKey = (u: string) => { try { const x = new URL(u); const jk = x.searchParams.get("jk"); return `${x.hostname.replace(/^www\./, "")}${x.pathname.replace(/\/+$/, "")}${jk ? `?jk=${jk}` : ""}`.toLowerCase(); } catch { return String(u || "").toLowerCase(); } };
 const SENSITIVE = /(salary|ctc|compensation|pay\b|stipend|password|ssn|aadhaar|aadhar|pan\b|passport|bank|account number|ifsc|otp)/i;
 
-// GET -> { urls, keys, profile, answer_bank, unanswered }
+// GET -> { urls, keys, profile, answer_bank, unanswered, settings, board_status }
 //   urls: tracker page URLs; keys: "company|title" normalised keys (boardrunner skips jobs already tracked).
 export const GET = handle(async (req) => {
   const { user, db } = await requireUser(req);
   const [{ data: apps, error }, { data: prof }, profile] = await Promise.all([
     db.from("applications").select("company, title, page_url").eq("user_id", user.id).order("created_at", { ascending: false }).limit(3000),
-    db.from("profiles").select("unanswered").eq("id", user.id).maybeSingle(),
+    db.from("profiles").select("unanswered, auto_settings, board_status").eq("id", user.id).maybeSingle(),
     loadProfile(db, user.id)
   ]);
   if (error) throw new HttpError(500, error.message);
@@ -31,12 +32,14 @@ export const GET = handle(async (req) => {
     if (a.page_url) urls.add(a.page_url);
     if (a.company && a.title) keys.add(`${normKey(a.company)}|${normKey(a.title)}`);
   }
-  return Response.json({ urls: [...urls], keys: [...keys], profile, answer_bank: profile?.answer_bank || [], unanswered: prof?.unanswered || [] });
+  return Response.json({ urls: [...urls], keys: [...keys], profile, answer_bank: profile?.answer_bank || [], unanswered: prof?.unanswered || [],
+    settings: normalizeAutoSettings(prof?.auto_settings), board_status: normalizeBoardStatus(prof?.board_status) });
 });
 
 // POST { action: "precheck" }                                            -> 402 when this month's autofills are used up
 // POST { action: "log", board, url, title?, company?, status, note? }    -> upsert the tracker card (status saved | needs_review | applied)
 // POST { action: "unanswered", questions: string[] }                     -> remember questions the runner could not answer
+// POST { action: "status", boards: [{ board, connected, checked_at }] }   -> merge into profiles.board_status (v2.4)
 // POST { action: "answer", question, job: { title, company, description } } -> { answer } short essay (<=120 words, profile facts only)
 export const POST = handle(async (req) => {
   const { user, db } = await requireUser(req);
@@ -107,6 +110,21 @@ export const POST = handle(async (req) => {
     return Response.json({ saved: qs.length, total: list.length });
   }
 
+  if (action === "status") {
+    const list = (Array.isArray(b.boards) ? b.boards : []).filter((x: any) => x && BOARDS.includes(x.board)).slice(0, 10);
+    if (!list.length) throw new HttpError(400, "boards must list { board, connected }");
+    const { data, error } = await db.from("profiles").select("board_status").eq("id", user.id).maybeSingle();
+    if (error) throw new HttpError(500, error.message);
+    const cur: Record<string, unknown> = { ...normalizeBoardStatus(data?.board_status) };
+    for (const x of list) {
+      const t = Date.parse(String(x.checked_at || ""));
+      cur[x.board] = { connected: typeof x.connected === "boolean" ? x.connected : null, checked_at: new Date(Number.isFinite(t) ? Math.min(t, Date.now()) : Date.now()).toISOString() };
+    }
+    const { error: e2 } = await db.from("profiles").update({ board_status: cur }).eq("id", user.id);
+    if (e2) throw new HttpError(500, e2.message);
+    return Response.json({ ok: true, board_status: cur });
+  }
+
   if (action === "answer") {
     const question = str(b.question, 500, "question");
     if (!question) throw new HttpError(400, "question is required");
@@ -128,5 +146,5 @@ PROFILE (data): ${JSON.stringify(promptProfile(profile))}`);
     return Response.json({ answer });
   }
 
-  throw new HttpError(400, "Unknown action. Use precheck, log, unanswered or answer.");
+  throw new HttpError(400, "Unknown action. Use precheck, log, unanswered, status or answer.");
 });

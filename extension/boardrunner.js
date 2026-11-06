@@ -1,4 +1,4 @@
-// ApplyPilot Board Auto-Apply runner (v2.3). Loaded into the service worker by background.js (importScripts), so it
+// ApplyPilot Board Auto-Apply runner (v2.4: zero-click daily schedule + website settings; v2.3 runner). Loaded into the service worker by background.js (importScripts), so it
 // shares background.js's helpers: api, log, serial, getDaily, getCap, istDay, sleep, rand, hostOf, noHash, Cancelled,
 // guard, wait, FATAL, getState (the saved-jobs Auto queue).
 //
@@ -19,13 +19,33 @@ const GH_LEVER = /(^|\.)(greenhouse\.io|lever\.co)$/i;
 
 // ───────── state (only this runner writes boardState)
 const B_DEFAULT = { running: false, status: "idle", message: "", boards: [], boardIdx: 0, board: "", tabId: null, done: [], current: null,
-  applied: 0, review: 0, skipped: 0, queued: 0, startedAt: 0, nextAt: 0, found: 0 };
+  applied: 0, review: 0, skipped: 0, lowMatch: 0, queued: 0, scheduled: false, startedAt: 0, nextAt: 0, found: 0 };
 async function bGet() { const s = (await chrome.storage.local.get("boardState")).boardState; return { ...B_DEFAULT, ...(s || {}) }; }
 const bPatch = (p) => serial(async () => { const s = { ...(await bGet()), ...p }; await chrome.storage.local.set({ boardState: s }); return s; });
 
-/** Per-board settings: { naukri: { on, cap }, … } with defaults from boards.js. */
+// ───────── v2.4 settings from the website (GET /api/auto/settings), cached in storage.serverAuto
+async function cachedAuto() { return (await chrome.storage.local.get("serverAuto")).serverAuto || null; }
+/** Fetches settings + board status from the server; falls back to the cached copy unless the error is fatal. */
+async function fetchAutoSettings() {
+  try {
+    const j = await api("/api/auto/settings", { method: "GET" });
+    const v = { settings: j.settings, board_status: j.board_status || {}, today: j.today || null, fetchedAt: Date.now() };
+    await chrome.storage.local.set({ serverAuto: v });
+    await bSchedule(v.settings);
+    return v.settings;
+  } catch (e) {
+    const c = await cachedAuto();
+    if ((e && FATAL.has(e.status)) || !c) throw e;
+    return c.settings;
+  }
+}
+/** Overall board daily cap: the website's daily_cap, else the Auto tab's cap. */
+async function bOverallCap() { const c = await cachedAuto(); const n = Number(c && c.settings && c.settings.daily_cap); return Number.isFinite(n) && n >= 1 ? Math.min(200, Math.floor(n)) : getCap(); }
+
+/** Per-board settings: { naukri: { on, cap }, … }. Website settings win; else local storage; else boards.js defaults. */
 async function boardSettings() {
-  const saved = (await chrome.storage.local.get("boardSettings")).boardSettings || {};
+  const c = await cachedAuto();
+  const saved = (c && c.settings && c.settings.boards) || (await chrome.storage.local.get("boardSettings")).boardSettings || {};
   const out = {};
   for (const id of BCFG.ORDER) {
     const b = BCFG.BOARDS[id], s = saved[id] || {};
@@ -92,6 +112,48 @@ async function bCheck(ctx, tabId, board, where) {
   if (s.rateLimit) throw new BoardStop(`${board.name} showed a limit message ("${s.rateText.slice(0, 80)}"). Stopped for today's safety.`);
   if (s.login) throw new BoardStop(`${board.name} looks signed out (login wall). Sign in to ${board.name} in this Chrome, then press Auto-apply again.`);
   return s;
+}
+
+// ───────── v2.4 board connection status
+async function postStatus(list) {
+  if (!list.length) return;
+  try {
+    const r = await api("/api/auto/board", { body: { action: "status", boards: list } });
+    const c = (await cachedAuto()) || {};
+    await chrome.storage.local.set({ serverAuto: { ...c, board_status: r.board_status || c.board_status || {} } });
+  } catch (e) { if (e && FATAL.has(e.status) && e.status !== 429) throw e; }
+}
+/** Before a run: open the board's recommended page in the runner tab and reuse the login-wall detection. true | false | null. */
+async function bConnCheck(ctx, tabId, board) {
+  await bGo(ctx, tabId, board.recommended[0], board);
+  const t = await chrome.tabs.get(tabId); const h = hostOf(t.url);
+  if (BCFG.EXCLUDED.test(h)) throw new BoardStop("Redirected to LinkedIn. Stopped: LinkedIn is never automated.");
+  let path = ""; try { path = new URL(t.url).pathname; } catch { /* about:blank */ }
+  if (board.loginUrl.test(h + path)) return false;
+  if (!board.hosts.test(h)) return /login|signin|auth/i.test(t.url) ? false : null;
+  const s = await bCall(tabId, "state", [board.id]);
+  if (!s) return null;
+  if (s.captcha) throw new BoardStop(`${board.name} showed a CAPTCHA. Stopped so you can deal with it yourself.`);
+  return !s.login;
+}
+/** Lightweight check without opening tabs: fetch the recommended page with the user's cookies (host permissions) and
+ *  look for a redirect to a login URL or a password field. Indeed's home page never redirects, so it is only checked in a tab. */
+async function bLightCheck() {
+  const out = [];
+  for (const id of BCFG.ORDER) {
+    const b = BCFG.BOARDS[id]; if (id === "indeed") continue;
+    let connected = null;
+    try {
+      const r = await fetch(b.recommended[0], { credentials: "include", redirect: "follow", cache: "no-store" });
+      let h = "", p = ""; try { const u = new URL(r.url); h = u.hostname; p = u.pathname; } catch { /* opaque */ }
+      if (b.loginUrl.test(h + p)) connected = false;
+      else if (r.ok && b.hosts.test(h)) { const html = (await r.text()).slice(0, 200000); connected = !/<input[^>]+type=["']?password/i.test(html); }
+    } catch { connected = null; }
+    if (connected !== null) out.push({ board: id, connected, checked_at: new Date().toISOString() });
+  }
+  await postStatus(out);
+  await chrome.storage.local.set({ boardLightAt: Date.now() });
+  return out;
 }
 
 // ───────── tracker
@@ -230,7 +292,7 @@ async function bApplyJob(ctx, tabId, board, job, profile, opts) {
   if (opts.fitCheck && (info.description || "").length > 80) {
     try {
       const s = await api("/api/score", { body: { title: info.title || job.title, description: info.description } });
-      if (s.score < opts.minScore) return { outcome: "skip", reason: `Fit ${s.score}% is below your ${opts.minScore}% minimum.` };
+      if (s.score < opts.minScore) return { outcome: "skip", lowMatch: true, reason: `Match ${s.score}% is below your ${opts.minScore}% minimum.` };
       job.score = s.score;
     } catch (e) { if (e && FATAL.has(e.status)) throw e; /* scoring is optional */ }
   }
@@ -430,8 +492,9 @@ async function boardLoop() {
     const profile = (await api("/api/profile", { method: "GET" })).profile || {};
     const k = await api("/api/auto/board", { method: "GET" });
     const known = { urls: new Set((k.urls || []).map(urlKey)), keys: new Set(k.keys || []) };
-    const disc = await getDiscoverySettings();
-    const fitCheck = !!(await chrome.storage.local.get("boardFitCheck")).boardFitCheck;
+    const srv = await fetchAutoSettings();
+    const minScore = Math.max(0, Math.min(100, Number(srv && srv.min_match) || 0));
+    const fitCheck = minScore > 0; // deterministic ATS keyword score (/api/score): no AI call, no quota
     const tabId = await bTab();
 
     for (let i = st.boardIdx; i < st.boards.length; i++) {
@@ -442,6 +505,12 @@ async function boardLoop() {
       const cap = settings[board.id].cap;
       let daily = await getDaily();
       if (((daily.boards || {})[board.id] || 0) >= cap) { await log("info", `${board.name}: today's cap reached (${cap}). Next board.`); continue; }
+      // v2.4: is the user signed in to this board? Report it; skip the board (not the run) when signed out.
+      let conn = null;
+      try { conn = await bConnCheck(ctx, tabId, board); }
+      catch (e) { if (e instanceof BoardStop || e instanceof Cancelled || (e && e.noAccess)) throw e; conn = null; }
+      await postStatus(conn === null ? [] : [{ board: board.id, connected: conn, checked_at: new Date().toISOString() }]);
+      if (conn === false) { await log("warn", `${board.name}: not signed in. Sign in to ${board.name} in this Chrome; skipped today.`); continue; }
       const doneSet = new Set((st.done || []).map(urlKey));
       let col;
       try { col = await bCollect(ctx, tabId, board, known, doneSet); }
@@ -452,7 +521,7 @@ async function boardLoop() {
       for (const job of col.cands) {
         st = await bGet(); if (!st.running) return;
         daily = await getDaily();
-        const overall = await getCap();
+        const overall = await bOverallCap();
         if (daily.count >= overall) return bStop(`Daily cap reached (${daily.count}/${overall}). Resets at midnight IST.`);
         if (((daily.boards || {})[board.id] || 0) >= cap) { await log("info", `${board.name}: today's cap reached (${cap}).`); break; }
         if (st.nextAt && Date.now() < st.nextAt) { await bPatch({ status: "waiting", message: `Next application in ${Math.round((st.nextAt - Date.now()) / 1000)}s` }); await wait(ctx, st.nextAt - Date.now()); }
@@ -461,7 +530,7 @@ async function boardLoop() {
         const jctx = { cancelled: false, deadline: Date.now() + B_JOB_MS, clicked: false, submitClicked: false };
         const onStop = setInterval(() => { if (ctx.cancelled) { jctx.cancelled = true; jctx.cancelReason = ctx.cancelReason; } }, 300);
         let res, stopMsg = "";
-        try { res = await bApplyJob(jctx, tabId, board, job, profile, { fitCheck, minScore: disc.minScore }); }
+        try { res = await bApplyJob(jctx, tabId, board, job, profile, { fitCheck, minScore }); }
         catch (e) {
           if (e instanceof BoardStop) { stopMsg = e.message; res = { outcome: jctx.clicked ? "review" : "none", reason: `Stopped: ${e.message}` }; }
           else if (e instanceof Cancelled || jctx.cancelled) res = { outcome: jctx.submitClicked ? "review" : "none", reason: jctx.submitClicked ? "Stopped right after Submit. Check whether it went through." : "Stopped." };
@@ -488,6 +557,7 @@ async function boardLoop() {
           await log("info", `${board.name}: ${jLabel(job)} applies on ${hostOf(res.href)}; added to your Auto queue as Saved.`);
         } else if (res.outcome === "skip") {
           p.skipped = st.skipped + 1;
+          if (res.lowMatch) p.lowMatch = (st.lowMatch || 0) + 1;
           await log("info", `${board.name}: skipped ${jLabel(job)}: ${res.reason}`);
         }
         const attempted = jctx.clicked;
@@ -512,21 +582,28 @@ async function boardLoop() {
   }
 }
 
-async function bStart() {
+let bStarting = false;
+async function bStart(opts = {}) {
+  if (bStarting) return { ok: true, already: true };
+  bStarting = true;
+  try { return await bStartInner(opts); } finally { bStarting = false; }
+}
+async function bStartInner(opts) {
   const st = await bGet();
   if (st.running) return { ok: true, already: true };
   const { autoEnabled, api: base, key } = await chrome.storage.local.get(["autoEnabled", "api", "key"]);
-  if (!autoEnabled) return { ok: false, error: "Turn Auto mode on first." };
-  if (!base || !key) return { ok: false, error: "Connect your account in Settings first." };
-  if ((await getState()).running) return { ok: false, error: "The saved-jobs Auto run is going. Stop it first (one tab at a time)." };
+  if (!autoEnabled) return { ok: false, retry: true, error: "Turn Auto mode on first." };
+  if (!base || !key) return { ok: false, retry: true, error: "Connect your account in Settings first." };
+  if ((await getState()).running) return { ok: false, retry: true, error: "The saved-jobs Auto run is going. Stop it first (one tab at a time)." };
+  try { await fetchAutoSettings(); } catch (e) { return { ok: false, retry: !(e && FATAL.has(e.status)), error: `Could not load your Auto-apply settings: ${e.message}` }; }
   const settings = await boardSettings();
   const boards = BCFG.ORDER.filter((id) => settings[id].on);
   if (!boards.length) return { ok: false, error: "Turn on at least one job board." };
-  const cap = await getCap(), daily = await getDaily();
+  const cap = await bOverallCap(), daily = await getDaily();
   if (daily.count >= cap) return { ok: false, error: `Daily cap reached (${daily.count}/${cap}). Resets at midnight IST.` };
   await chrome.storage.session.set({ boardAlive: true });
-  await bPatch({ ...B_DEFAULT, tabId: st.tabId, running: true, status: "starting", boards, startedAt: Date.now() });
-  await log("info", `Board Auto-Apply started: ${boards.map((id) => BCFG.BOARDS[id].name).join(" → ")} (recommended jobs only), ${cap - daily.count} left under today's cap.`);
+  await bPatch({ ...B_DEFAULT, tabId: st.tabId, running: true, status: "starting", boards, startedAt: Date.now(), scheduled: !!opts.scheduled });
+  await log("info", `Board Auto-Apply started${opts.scheduled ? " (scheduled, no click)" : ""}: ${boards.map((id) => BCFG.BOARDS[id].name).join(" → ")} (recommended jobs only), ${cap - daily.count} left under today's cap.`);
   chrome.alarms.create(B_TICK, { periodInMinutes: 0.5 });
   bKick();
   return { ok: true };
@@ -545,8 +622,46 @@ async function bStop(message = "Stopped.") {
   if (s2.tabId != null) { try { await chrome.tabs.remove(s2.tabId); } catch { /* gone */ } await bPatch({ tabId: null }); }
 }
 
-// Messages (board:start / board:stop / board:state) are handled in background.js.
-chrome.alarms.onAlarm.addListener((a) => { if (a.name === B_TICK) bGet().then((s) => { if (s.running) bKick(); }); });
+// ───────── v2.4 zero-click schedule: daily alarm at run_time (IST) + a 15-min check that also catches up when Chrome
+// opened after run_time and today has not run yet. Runs only while Chrome is open; Auto mode (local switch) must be on.
+const B_DAILY = "ap-board-daily", B_CHECK = "ap-board-check", LIGHT_EVERY_MS = 6 * 3600_000;
+const runAtToday = (hhmm) => Date.parse(`${istDay()}T${/^\d\d:\d\d$/.test(hhmm || "") ? hhmm : "09:00"}:00+05:30`);
+async function bSchedule(settings) {
+  if (!settings || !settings.enabled) { await chrome.alarms.clear(B_DAILY); return; }
+  let when = runAtToday(settings.run_time); if (when <= Date.now()) when += 86_400_000;
+  const a = await chrome.alarms.get(B_DAILY);
+  if (!a || Math.abs(a.scheduledTime - when) > 60_000) chrome.alarms.create(B_DAILY, { when, periodInMinutes: 1440 });
+}
+async function ensureCheckAlarm() { if (!(await chrome.alarms.get(B_CHECK))) chrome.alarms.create(B_CHECK, { delayInMinutes: 1, periodInMinutes: 15 }); }
+let bScheduling = false;
+async function bMaybeScheduled(why) {
+  if (bScheduling) return; bScheduling = true;
+  try {
+    const { api: base, key } = await chrome.storage.local.get(["api", "key"]);
+    if (!base || !key) return;
+    let s; try { s = await fetchAutoSettings(); } catch { return; }
+    await bSchedule(s);
+    const { boardLightAt } = await chrome.storage.local.get("boardLightAt");
+    if (!boardLightAt || Date.now() - boardLightAt > LIGHT_EVERY_MS) await bLightCheck().catch(() => {});
+    if (!s || !s.enabled) return;
+    const day = istDay();
+    const { boardLastAutoDay } = await chrome.storage.local.get("boardLastAutoDay");
+    if (boardLastAutoDay === day || Date.now() < runAtToday(s.run_time)) return;
+    const r = await bStart({ scheduled: true });
+    if (r.ok) { await chrome.storage.local.set({ boardLastAutoDay: day }); if (!r.already) await log("info", `Scheduled run (${s.run_time} IST${why === "catchup" ? ", catch-up" : ""}).`); }
+    else if (!r.retry) { await chrome.storage.local.set({ boardLastAutoDay: day }); await log("warn", `Scheduled run skipped today: ${r.error}`); }
+  } finally { bScheduling = false; }
+}
+chrome.runtime.onStartup.addListener(() => { ensureCheckAlarm(); setTimeout(() => bMaybeScheduled("catchup"), 8000); });
+chrome.runtime.onInstalled.addListener(() => { ensureCheckAlarm(); setTimeout(() => bMaybeScheduled("catchup"), 8000); });
+ensureCheckAlarm();
+
+// Messages (board:start / board:stop / board:state / board:check / board:settings) are handled in background.js.
+chrome.alarms.onAlarm.addListener((a) => {
+  if (a.name === B_TICK) bGet().then((s) => { if (s.running) bKick(); });
+  else if (a.name === B_DAILY) bMaybeScheduled("alarm");
+  else if (a.name === B_CHECK) bMaybeScheduled("catchup");
+});
 chrome.storage.onChanged.addListener((c, area) => {
   if (area === "local" && c.autoEnabled && c.autoEnabled.newValue === false) bGet().then((s) => { if (s.running) bStop("Auto mode was turned off."); });
 });
@@ -557,7 +672,7 @@ chrome.tabs.onRemoved.addListener((tabId) => { bGet().then((s) => { if (s.tabId 
 bGet().then(async (s) => {
   if (!s.running) return;
   const { boardAlive } = await chrome.storage.session.get("boardAlive");
-  if (!boardAlive) { await bPatch({ current: null, tabId: null }); await bStop("Stopped because Chrome restarted. Press Auto-apply recommended jobs to continue."); return; }
+  if (!boardAlive) { await bPatch({ current: null, tabId: null }); await bStop("Stopped because Chrome restarted. Press Run now to continue."); return; }
   if (s.current && s.current.step === "submitting") {
     await trackerLog(BCFG.BOARDS[s.current.board], s.current, "needs_review", "Interrupted right after Submit. Check whether it went through.").catch(() => {});
     await bPatch({ current: null, done: [...(s.done || []), s.current.url].slice(-500) });

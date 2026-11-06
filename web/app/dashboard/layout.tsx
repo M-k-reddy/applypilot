@@ -14,6 +14,7 @@ const NAV = [
   { href: "/dashboard/jobs", label: "Jobs", i: "⌕" },
   { href: "/dashboard/tailor", label: "Tailor", i: "⇄" },
   { href: "/dashboard/tracker", label: "Tracker", i: "▦" },
+  { href: "/dashboard/auto", label: "Auto-apply", i: "↻" },
   { href: "/dashboard/extension", label: "Extension", i: "⚡" },
   { href: "/dashboard/billing", label: "Billing", i: "₹" }
 ];

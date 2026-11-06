@@ -466,6 +466,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === "board:start") { bStart().then(withState).catch(fail); return true; }
   if (msg.type === "board:stop") { bGet().then((b) => (b.running ? bStop("Stopped by you.") : null)).then(() => withState({ ok: true })).catch(fail); return true; }
   if (msg.type === "board:state") { withState({ ok: true }).catch(fail); return true; }
+  // v2.4: refresh website settings / lightweight sign-in check for the side panel.
+  if (msg.type === "board:settings") { fetchAutoSettings().then((settings) => sendResponse({ ok: true, settings })).catch(fail); return true; }
+  if (msg.type === "board:check") { bLightCheck().then((list) => sendResponse({ ok: true, list })).catch(fail); return true; }
 });
 chrome.alarms.onAlarm.addListener((a) => { if (a.name === TICK || a.name === NEXT) kick(); });
 chrome.storage.onChanged.addListener((c, area) => {

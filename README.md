@@ -8,7 +8,7 @@ It costs ₹0 to host: Vercel Hobby + Supabase free tier + Gemini API free tier 
 
 | Part | What it does |
 |---|---|
-| `web/` | Next.js 14 (App Router). Landing page, dashboard (Overview, Profile, Jobs, Tailor, Tracker, Extension, Billing), print route for the PDF, and all API routes. |
+| `web/` | Next.js 14 (App Router). Landing page, dashboard (Overview, Profile, Jobs, Tailor, Tracker, Auto-apply, Extension, Billing), print route for the PDF, and all API routes. |
 | `web/supabase/schema.sql` | Idempotent schema with RLS, column privileges, usage events, API keys. Safe to re-run, and migrates a v1 database. |
 | `extension/` | Chrome MV3 extension with a **side panel** (Job · Autofill · Answers · Auto). Scripts are injected only when you click, or by opt-in Auto mode into its own background tab; no always-on content script. |
 | `web/supabase/migrations/automode.sql` | Idempotent migration that adds the `needs_review` status for Auto mode (also folded into `schema.sql`). |
@@ -44,6 +44,9 @@ Run `web/supabase/migrations/automode.sql` (or re-run `schema.sql`) once so the 
 
 ### Board Auto-Apply (v2.3)
 Side panel → **Auto** tab → **Auto-apply recommended jobs**. With Auto mode on, ApplyPilot opens each enabled board's own *recommended for you* page in your signed-in Chrome (Naukri → Internshala → Indeed India → Foundit; Foundit is off by default) and applies one job at a time in a background tab, only where the apply flow stays on the board. Each board has a toggle and a daily cap; the overall Auto daily cap (IST) still applies. A random 25–75 s pause separates applications. It stops at once on a CAPTCHA, a sign-in wall, a rate-limit message or an unknown page state; any question it can't answer from your profile or answer bank goes to **Needs review** and is saved to the answer bank as unanswered. **Stop** ends the run. LinkedIn is never opened. Code: `extension/boards.js` (board config), `boardrunner.js` (runner, loaded by `background.js`), `boardpage.js` (page script). Needs the `/api/auto/board` server route.
+
+### Zero-click Auto-apply (v2.4)
+Dashboard → **Auto-apply**: install/connect the extension, see which boards you are signed in to (reported by the extension before each run and by a light check every ~6 h; LinkedIn is not supported), and set **run daily** on/off, run time (IST, default 09:00), per-board on + cap, overall daily cap and **min match %** (jobs whose ATS keyword match is below it are skipped and logged). Settings are stored in `profiles.auto_settings`, sign-in status in `profiles.board_status`. With Auto mode switched on once in the side panel, the extension (`chrome.alarms`) starts the board run at that time with no click while Chrome is open, and catches up the same day if Chrome opens later. **Run now** still works. Boards you are signed out of are skipped for that run. All v2.3 gates and caps still apply. The page also lists unanswered screening questions so you can answer them into the answer bank. API: `GET/PUT /api/auto/settings`, `POST /api/auto/board {action:"status"}`. Re-run `web/supabase/schema.sql` (or `migrations/zero_click.sql`).
 
 ### Security model
 - `profiles`: users can only `UPDATE (profile_json, preferences)`; insert/delete are revoked.

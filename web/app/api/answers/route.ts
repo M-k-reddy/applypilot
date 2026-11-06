@@ -16,14 +16,17 @@ export const POST = handle(async (req) => {
   const incoming = body.answers.slice(0, 50).map((x: any) => ({ q: str(x?.q, 300, "question"), a: str(x?.a, 2000, "answer") }))
     .filter((x) => x.q && x.a && !SENSITIVE.test(x.q));
 
-  const { data } = await db.from("profiles").select("profile_json").eq("id", user.id).maybeSingle();
+  const { data } = await db.from("profiles").select("profile_json, unanswered").eq("id", user.id).maybeSingle();
   const profile = data?.profile_json ? normalizeProfile(data.profile_json) : emptyProfile();
   const keyOf = (q: string) => q.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
   const map = new Map(profile.answer_bank.map((x) => [keyOf(x.q), x]));
   for (const x of incoming) map.set(keyOf(x.q), x);
   profile.answer_bank = [...map.values()].slice(-200);
 
-  const { error } = await db.from("profiles").update({ profile_json: profile, updated_at: new Date().toISOString() }).eq("id", user.id);
+  // Answered questions leave the Board Auto-Apply "unanswered" list (v2.4).
+  const done = new Set(incoming.map((x) => keyOf(x.q)));
+  const unanswered = (Array.isArray(data?.unanswered) ? data!.unanswered : []).filter((x: any) => x?.q && !done.has(keyOf(String(x.q))));
+  const { error } = await db.from("profiles").update({ profile_json: profile, unanswered, updated_at: new Date().toISOString() }).eq("id", user.id);
   if (error) throw new HttpError(500, error.message);
   return Response.json({ saved: incoming.length, skipped: body.answers.length - incoming.length, total: profile.answer_bank.length });
 });
