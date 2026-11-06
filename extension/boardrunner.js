@@ -545,11 +545,7 @@ async function bStop(message = "Stopped.") {
   if (s2.tabId != null) { try { await chrome.tabs.remove(s2.tabId); } catch { /* gone */ } await bPatch({ tabId: null }); }
 }
 
-chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
-  if (sender.id !== chrome.runtime.id || !msg || typeof msg.type !== "string") return;
-  if (msg.type === "board:start") { bStart().then(sendResponse, (e) => sendResponse({ ok: false, error: String(e.message || e) })); return true; }
-  if (msg.type === "board:stop" || msg.type === "auto:stop") { bGet().then((s) => (s.running ? bStop("Stopped by you.") : null)).then(() => { if (msg.type === "board:stop") sendResponse({ ok: true }); }); return msg.type === "board:stop"; }
-});
+// Messages (board:start / board:stop / board:state) are handled in background.js.
 chrome.alarms.onAlarm.addListener((a) => { if (a.name === B_TICK) bGet().then((s) => { if (s.running) bKick(); }); });
 chrome.storage.onChanged.addListener((c, area) => {
   if (area === "local" && c.autoEnabled && c.autoEnabled.newValue === false) bGet().then((s) => { if (s.running) bStop("Auto mode was turned off."); });

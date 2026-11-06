@@ -133,6 +133,18 @@
         </div>
         <p id="autoMsg" class="msg" role="status" aria-live="polite"></p>
       </div>
+      <div class="card" id="boardCard">
+        <h3>Board Auto-Apply (recommended jobs)</h3>
+        <p class="muted small">Applies to the jobs each board recommends for you, inside your signed-in Chrome, one at a time. Same safety gates: daily caps, 25–75 s pauses, stops on CAPTCHA, sign-in wall or limit message, and unsure answers go to <b>Needs review</b>. LinkedIn is never automated. Needs Auto mode on.</p>
+        <div id="boardList"></div>
+        <div class="row">
+          <button id="boardStart" class="btn primary">▶ Auto-apply recommended jobs</button>
+          <button id="boardStop" class="btn">■ Stop</button>
+        </div>
+        <p id="boardStatus" class="small" role="status" aria-live="polite"></p>
+        <p class="small">Applied today: <b id="boardToday">0</b></p>
+        <p id="boardMsg" class="msg" role="status" aria-live="polite"></p>
+      </div>
       <div class="card" aria-live="polite">
         <p id="autoStatus" class="small"></p>
         <p id="autoCurrent" class="small muted"></p>

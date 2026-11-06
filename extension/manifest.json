@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "ApplyPilot – AI job copilot",
   "short_name": "ApplyPilot",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "Tailor resumes, write cover letters, fill forms safely. Optional Auto mode finds jobs and applies only when confident.",
   "minimum_chrome_version": "116",
   "permissions": [
@@ -12,6 +12,18 @@
     "sidePanel",
     "tabs",
     "alarms"
+  ],
+  "host_permissions": [
+    "https://www.naukri.com/*",
+    "https://*.naukri.com/*",
+    "https://internshala.com/*",
+    "https://*.internshala.com/*",
+    "https://in.indeed.com/*",
+    "https://smartapply.indeed.com/*",
+    "https://apply.indeed.com/*",
+    "https://m5.apply.indeed.com/*",
+    "https://www.foundit.in/*",
+    "https://*.foundit.in/*"
   ],
   "optional_host_permissions": [
     "https://*/*",

@@ -120,7 +120,7 @@ const TABS = ["job", "fill", "answers", "auto"];
 function showTab(name) {
   for (const t of TABS) { $(`tab-${t}`).setAttribute("aria-selected", String(t === name)); $(`panel-${t}`).hidden = t !== name; }
   if (name === "answers") loadAnswers();
-  if (name === "auto") renderAuto();
+  if (name === "auto") { renderAuto(); renderBoards(); }
 }
 TABS.forEach((t) => $(`tab-${t}`).addEventListener("click", () => showTab(t)));
 document.querySelector(".tabs").addEventListener("keydown", (e) => {
@@ -424,6 +424,75 @@ chrome.storage.onChanged.addListener((c, area) => {
   if (area === "local" && (c.autoState || c.autoLog || c.autoDaily || c.autoEnabled || c.autoCap || c.autoDiscover || c.autoRemote) && !$("panel-auto").hidden) renderAuto();
 });
 setInterval(() => { if (!$("panel-auto").hidden) renderAuto(); }, 5000); // keeps the "next job in Ns" countdown fresh
+
+// ───────── Board Auto-Apply (v2.3; runner in boardrunner.js). Toggle + daily cap per board, live status, today's count.
+const BOARD_UI = [["naukri", "Naukri", 25, true], ["internshala", "Internshala", 25, true], ["indeed", "Indeed India", 15, true], ["foundit", "Foundit", 15, false]];
+const BOARD_STATUS = { idle: "Idle", starting: "Starting", collecting: "Collecting recommended jobs", running: "Applying", waiting: "Waiting before the next job", stopped: "Stopped" };
+async function getBoardSettingsUI() {
+  const saved = (await chrome.storage.local.get("boardSettings")).boardSettings || {};
+  const out = {};
+  for (const [id, , cap, on] of BOARD_UI) { const s = saved[id] || {}; const c = Number(s.cap); out[id] = { on: typeof s.on === "boolean" ? s.on : on, cap: Number.isFinite(c) && c >= 1 ? Math.min(100, Math.floor(c)) : cap }; }
+  return out;
+}
+async function saveBoard(id, p) { const s = await getBoardSettingsUI(); s[id] = { ...s[id], ...p }; await chrome.storage.local.set({ boardSettings: s }); }
+function buildBoardList() {
+  const box = $("boardList"); clear(box);
+  for (const [id, name] of BOARD_UI) {
+    const on = el("input", { type: "checkbox", role: "switch", id: `board-${id}-on` });
+    on.addEventListener("change", (e) => saveBoard(id, { on: e.currentTarget.checked }));
+    const cap = el("input", { type: "number", min: "1", max: "100", step: "1", id: `board-${id}-cap`, style: "width:64px", "aria-label": `${name} daily cap` });
+    cap.addEventListener("change", async (e) => {
+      const n = Math.floor(Number(e.currentTarget.value));
+      if (!Number.isFinite(n) || n < 1 || n > 100) { say("boardMsg", "Board cap must be between 1 and 100.", "bad"); return renderBoards(); }
+      await saveBoard(id, { cap: n }); say("boardMsg", `${name} daily cap set to ${n}.`, "ok");
+    });
+    box.append(el("div", { class: "row between" }, [
+      el("label", { class: "switch" }, [on, el("span", { text: name })]),
+      el("label", { class: "field inline" }, [el("span", { text: "Cap/day" }), cap]),
+      el("span", { class: "small muted", id: `board-${id}-today`, text: "0 today" })
+    ]));
+  }
+}
+async function renderBoards() {
+  const d = await chrome.storage.local.get(["autoEnabled", "boardState", "autoDaily"]);
+  const st = d.boardState || {}; const set = await getBoardSettingsUI();
+  const daily = d.autoDaily && d.autoDaily.day === istDayUI() ? d.autoDaily : { count: 0, boards: {} };
+  let total = 0;
+  for (const [id] of BOARD_UI) {
+    const n = (daily.boards || {})[id] || 0; total += n;
+    const on = $(`board-${id}-on`), cap = $(`board-${id}-cap`);
+    on.checked = set[id].on; on.disabled = !!st.running;
+    if (document.activeElement !== cap) cap.value = String(set[id].cap);
+    $(`board-${id}-today`).textContent = `${n}/${set[id].cap} today`;
+  }
+  $("boardToday").textContent = String(total);
+  $("boardStart").disabled = !d.autoEnabled || !!st.running; $("boardStop").disabled = !st.running;
+  const name = (BOARD_UI.find((b) => b[0] === st.board) || [])[1];
+  let line = BOARD_STATUS[st.status] || st.status || "Idle";
+  if (st.running && name) line += ` · ${name}`;
+  if (st.status === "waiting" && st.nextAt) line = `Waiting · next in ${Math.max(0, Math.round((st.nextAt - Date.now()) / 1000))}s`;
+  if (st.current) line += ` · ${[st.current.company, st.current.title].filter(Boolean).join(" · ") || st.current.url}${st.current.step === "submitting" ? " (submitting…)" : ""}`;
+  if (st.message && !st.running) line += `: ${st.message}`;
+  if (st.startedAt) line += ` · applied ${st.applied || 0}, review ${st.review || 0}, skipped ${st.skipped || 0}`;
+  $("boardStatus").textContent = line;
+}
+buildBoardList();
+$("boardStart").addEventListener("click", async (e) => {
+  busy(e.currentTarget, true, "Starting…");
+  try {
+    const r = await chrome.runtime.sendMessage({ type: "board:start" });
+    if (!r || !r.ok) say("boardMsg", (r && r.error) || "Could not start.", "bad"); else say("boardMsg", "Started. Jobs open in a background tab; stay signed in to the boards.", "ok");
+  } catch (err) { say("boardMsg", String(err.message || err), "bad"); }
+  busy($("boardStart"), false); renderBoards();
+});
+$("boardStop").addEventListener("click", async () => {
+  try { await chrome.runtime.sendMessage({ type: "board:stop" }); say("boardMsg", "Stopped.", ""); } catch (err) { say("boardMsg", String(err.message || err), "bad"); }
+  renderBoards();
+});
+chrome.storage.onChanged.addListener((c, area) => {
+  if (area === "local" && (c.boardState || c.boardSettings || c.autoDaily || c.autoEnabled) && !$("panel-auto").hidden) renderBoards();
+});
+setInterval(() => { if (!$("panel-auto").hidden) renderBoards(); }, 2000);
 
 // ───────── follow the active tab
 let detectTimer = null;

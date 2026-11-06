@@ -42,6 +42,9 @@ Side panel → **Auto** tab. You turn it on, set a daily cap (default 20, resets
 
 Run `web/supabase/migrations/automode.sql` (or re-run `schema.sql`) once so the database accepts the `needs_review` status.
 
+### Board Auto-Apply (v2.3)
+Side panel → **Auto** tab → **Auto-apply recommended jobs**. With Auto mode on, ApplyPilot opens each enabled board's own *recommended for you* page in your signed-in Chrome (Naukri → Internshala → Indeed India → Foundit; Foundit is off by default) and applies one job at a time in a background tab, only where the apply flow stays on the board. Each board has a toggle and a daily cap; the overall Auto daily cap (IST) still applies. A random 25–75 s pause separates applications. It stops at once on a CAPTCHA, a sign-in wall, a rate-limit message or an unknown page state; any question it can't answer from your profile or answer bank goes to **Needs review** and is saved to the answer bank as unanswered. **Stop** ends the run. LinkedIn is never opened. Code: `extension/boards.js` (board config), `boardrunner.js` (runner, loaded by `background.js`), `boardpage.js` (page script). Needs the `/api/auto/board` server route.
+
 ### Security model
 - `profiles`: users can only `UPDATE (profile_json, preferences)`; insert/delete are revoked.
 - `subscriptions` (plan): readable by the owner, **writable only by the service role** (server + signed Razorpay webhook).

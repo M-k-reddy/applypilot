@@ -428,6 +428,7 @@ async function finishJob(app, result) {
 async function startRun() {
   const st = await getState();
   if (st.running) return { ok: true, already: true };
+  if ((await bGet()).running) return { ok: false, error: "Board Auto-Apply is running. Stop it first (one tab at a time)." };
   const { autoEnabled, api: base, key } = await chrome.storage.local.get(["autoEnabled", "api", "key"]);
   if (!autoEnabled) return { ok: false, error: "Turn Auto mode on first." };
   if (!base || !key) return { ok: false, error: "Connect your account in Settings first." };
@@ -458,7 +459,13 @@ async function stopRun(message = "Stopped.") {
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (sender.id !== chrome.runtime.id || !msg || typeof msg.type !== "string") return;
   if (msg.type === "auto:start") { startRun().then(sendResponse, (e) => sendResponse({ ok: false, error: String(e.message || e) })); return true; }
-  if (msg.type === "auto:stop") { stopRun("Stopped by you.").then(() => sendResponse({ ok: true })); return true; }
+  if (msg.type === "auto:stop") { Promise.all([stopRun("Stopped by you."), bGet().then((b) => (b.running ? bStop("Stopped by you.") : null))]).then(() => sendResponse({ ok: true }), () => sendResponse({ ok: true })); return true; }
+  // v2.3 Board Auto-Apply (runner in boardrunner.js). Each reply carries the current board state.
+  const withState = (r) => bGet().then((state) => sendResponse({ ...(r || { ok: true }), state }));
+  const fail = (e) => sendResponse({ ok: false, error: String((e && e.message) || e) });
+  if (msg.type === "board:start") { bStart().then(withState).catch(fail); return true; }
+  if (msg.type === "board:stop") { bGet().then((b) => (b.running ? bStop("Stopped by you.") : null)).then(() => withState({ ok: true })).catch(fail); return true; }
+  if (msg.type === "board:state") { withState({ ok: true }).catch(fail); return true; }
 });
 chrome.alarms.onAlarm.addListener((a) => { if (a.name === TICK || a.name === NEXT) kick(); });
 chrome.storage.onChanged.addListener((c, area) => {
@@ -479,3 +486,8 @@ getState().then(async (s) => {
   if (autoAlive) kick();
   else { await patch({ current: null, tabId: null }); await stopRun("Stopped because Chrome restarted. Press Start to continue."); }
 });
+
+// ───────────────────────── v2.3 Board Auto-Apply
+// Loaded last so the helpers above (api, log, serial, getDaily, getCap, istDay, sleep, rand, hostOf, noHash,
+// Cancelled, guard, wait, FATAL, getState, getDiscoverySettings) exist before the runner's top-level code runs.
+importScripts("boards.js", "boardrunner.js");
