@@ -111,6 +111,9 @@ alter table public.applications drop constraint if exists applications_source_ch
 alter table public.applications add constraint applications_source_check check (source in ('manual', 'auto'));
 create index if not exists applications_user_source_time on public.applications (user_id, source, created_at);
 alter table public.jobs add column if not exists ats_score int;
+-- Board Auto-Apply (v2.3): board the runner applied on; questions it could not answer.
+alter table public.applications add column if not exists board text;
+alter table public.profiles add column if not exists unanswered jsonb not null default '[]'::jsonb;
 
 -- v1 statuses → v2 Kanban columns
 update public.applications set status = 'saved' where status = 'filled';
