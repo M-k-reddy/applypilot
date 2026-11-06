@@ -26,7 +26,21 @@ export function istMonthStart(now = new Date()): string {
   return new Date(Date.UTC(ist.getUTCFullYear(), ist.getUTCMonth(), 1) - IST).toISOString();
 }
 
+/** Admins (ADMIN_EMAILS, comma-separated; owner included by default) get Pro: unlimited usage. */
+const OWNER = "challamanikethanreddy@gmail.com";
+export function adminEmails(): string[] {
+  return [OWNER, ...(process.env.ADMIN_EMAILS || "").split(",")].map((e) => e.trim().toLowerCase()).filter(Boolean);
+}
+export async function isAdmin(db: SupabaseClient, userId: string): Promise<boolean> {
+  try {
+    const { data } = await db.auth.admin.getUserById(userId);
+    const email = data?.user?.email?.toLowerCase();
+    return !!email && adminEmails().includes(email);
+  } catch { return false; }
+}
+
 export async function getPlan(db: SupabaseClient, userId: string): Promise<"free" | "pro"> {
+  if (await isAdmin(db, userId)) return "pro";
   const { data } = await db.from("subscriptions").select("plan, status, current_period_end").eq("user_id", userId).maybeSingle();
   if (!data || data.plan !== "pro") return "free";
   if (data.current_period_end && new Date(data.current_period_end).getTime() < Date.now() - 3 * 86400_000) return "free";

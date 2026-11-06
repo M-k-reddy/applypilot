@@ -64,7 +64,7 @@ function SignIn() {
     e.preventDefault();
     if (!/^\S+@\S+\.\S+$/.test(email)) { setErr("Enter a valid email address."); setState("error"); return; }
     setState("sending"); setErr("");
-    const { error } = await browserClient().auth.signInWithOtp({ email, options: { emailRedirectTo: window.location.href } });
+    const { error } = await browserClient().auth.signInWithOtp({ email, options: { emailRedirectTo: window.location.origin + "/dashboard" } });
     if (error) { setErr(error.message); setState("error"); } else setState("sent");
   };
   return (

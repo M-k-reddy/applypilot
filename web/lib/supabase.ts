@@ -9,7 +9,7 @@ import { createClient, SupabaseClient } from "@supabase/supabase-js";
  Tolerates missing env at build time: clients are only created when a request arrives.
 */
 
-const url = () => process.env.NEXT_PUBLIC_SUPABASE_URL || "";
+const url = () => (process.env.NEXT_PUBLIC_SUPABASE_URL || "").trim().replace(/\/(rest\/v1\/?)?$/, "").replace(/\/+$/, "");
 const serviceKey = () => process.env.SUPABASE_SERVICE_ROLE_KEY || "";
 
 export class HttpError extends Error {
