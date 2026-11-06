@@ -60,10 +60,17 @@ function SignIn() {
   const [email, setEmail] = useState("");
   const [state, setState] = useState<"idle" | "sending" | "sent" | "error">("idle");
   const [err, setErr] = useState("");
+  const [password, setPassword] = useState("");
+  const [usePw, setUsePw] = useState(false);
   const send = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!/^\S+@\S+\.\S+$/.test(email)) { setErr("Enter a valid email address."); setState("error"); return; }
     setState("sending"); setErr("");
+    if (usePw) {
+      const { error } = await browserClient().auth.signInWithPassword({ email, password });
+      if (error) { setErr(error.message); setState("error"); } else setState("idle");
+      return;
+    }
     const { error } = await browserClient().auth.signInWithOtp({ email, options: { emailRedirectTo: window.location.origin + "/dashboard" } });
     if (error) { setErr(error.message); setState("error"); } else setState("sent");
   };
@@ -81,8 +88,12 @@ function SignIn() {
             <label className="field"><span>Email</span>
               <input className="input" type="email" autoComplete="email" placeholder="you@college.edu.in" value={email} onChange={(e) => setEmail(e.target.value)} required />
             </label>
+            {usePw && <label className="field"><span>Password</span>
+              <input className="input" type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} required />
+            </label>}
             {state === "error" && <div className="alert alert-bad" role="alert">{err}</div>}
-            <button className="btn btn-primary btn-lg" disabled={state === "sending"}>{state === "sending" ? <><span className="spinner" /> Sending…</> : "Email me a sign-in link"}</button>
+            <button className="btn btn-primary btn-lg" disabled={state === "sending"}>{state === "sending" ? <><span className="spinner" /> {usePw ? "Signing in…" : "Sending…"}</> : usePw ? "Sign in" : "Email me a sign-in link"}</button>
+            <button type="button" className="btn" onClick={() => { setUsePw(!usePw); setState("idle"); setErr(""); }}>{usePw ? "Email me a link instead" : "Sign in with password"}</button>
           </form>
         )}
         <p className="tiny muted" style={{ marginTop: 18 }}>Free plan, no card needed. <Link href="/">Back to home</Link></p>
