@@ -1,12 +1,13 @@
 import { requireUser, handle, preflight, readJSON, HttpError } from "@/lib/supabase";
 import { normalizeAutoSettings, normalizeBoardStatus, istMidnightISO } from "@/lib/autosettings";
+import { saveAutoSettings } from "@/lib/autosave";
 
 export const dynamic = "force-dynamic";
 export const OPTIONS = preflight;
 
 // Zero-click auto-apply (v2.4). API key (extension, read-only) or dashboard JWT.
 // GET  -> { settings, board_status, today: { applied, needs_review }, unanswered }
-// PUT  { settings } -> { settings }   (dashboard sign-in only)
+// PUT  { settings } -> { settings, max_daily_cap }  (daily_cap clamped to the plan's max)   (dashboard sign-in only)
 export const GET = handle(async (req) => {
   const { user, db } = await requireUser(req);
   const since = istMidnightISO();
@@ -28,8 +29,6 @@ export const PUT = handle(async (req) => {
   const { user, db } = await requireUser(req, { allowApiKey: false });
   const b = await readJSON<{ settings?: unknown }>(req);
   if (!b.settings || typeof b.settings !== "object") throw new HttpError(400, "settings is required");
-  const settings = normalizeAutoSettings(b.settings);
-  const { error } = await db.from("profiles").update({ auto_settings: settings, updated_at: new Date().toISOString() }).eq("id", user.id);
-  if (error) throw new HttpError(500, error.message);
-  return Response.json({ settings });
+  const { settings, max } = await saveAutoSettings(db, user.id, b.settings);
+  return Response.json({ settings, max_daily_cap: max });
 });

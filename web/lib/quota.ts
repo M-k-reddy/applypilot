@@ -47,6 +47,11 @@ export async function getPlan(db: SupabaseClient, userId: string): Promise<"free
   return "pro";
 }
 
+/** Highest auto-apply daily cap a plan may set (FREE_AUTO_DAILY_MAX / PRO_AUTO_DAILY_MAX env, defaults 20 / 200). */
+export function autoDailyMax(plan: "free" | "pro"): number {
+  return plan === "pro" ? n(process.env.PRO_AUTO_DAILY_MAX, 200) : n(process.env.FREE_AUTO_DAILY_MAX, 20);
+}
+
 export async function usageThisMonth(db: SupabaseClient, userId: string): Promise<Record<UsageKind, number>> {
   const { data, error } = await db.from("usage_events").select("kind").eq("user_id", userId).gte("created_at", istMonthStart()).limit(5000);
   if (error) throw new HttpError(500, error.message);

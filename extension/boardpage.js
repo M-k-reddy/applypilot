@@ -82,7 +82,7 @@
       const title = txt(q1(L.title, card, false), 200);
       const company = txt(q1(L.company, card, false), 160);
       const eligible = !L.require || L.require.test(txt(card, 3000)) || !!q1(L.requireSel || [], card, false);
-      jobs.push({ url, title, company, applied: exactApplied(card), eligible });
+      jobs.push({ url, title, company, applied: exactApplied(card), eligible, text: txt(card, 800) });
     }
     return { jobs, url: location.href };
   }

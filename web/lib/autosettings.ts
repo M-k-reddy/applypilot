@@ -7,10 +7,24 @@ export type AutoSettings = {
   boards: Record<BoardId, { on: boolean; cap: number }>;
   daily_cap: number;             // overall board applications per IST day
   min_match: number;             // 0..100, skip jobs whose ATS match is below this (0 = off)
+  roles: string[];               // role/keyword filter on job titles (empty = all recommended jobs)
+  locations: string[];           // location filter on listing text (empty = any location)
 };
 export type BoardStatus = Record<string, { connected: boolean | null; checked_at: string }>;
 
 const DEF_BOARDS: AutoSettings["boards"] = { naukri: { on: true, cap: 25 }, internshala: { on: true, cap: 25 }, indeed: { on: true, cap: 15 }, foundit: { on: false, cap: 15 } };
+/** Clean a short list of keywords: trimmed, lower-cased, deduped, max 10 × 60 chars. */
+export function cleanList(v: unknown): string[] {
+  const arr = Array.isArray(v) ? v : typeof v === "string" ? v.split(",") : [];
+  const out: string[] = [];
+  for (const x of arr) {
+    if (typeof x !== "string") continue;
+    const t = x.replace(/[^\p{L}\p{N} .+#/&-]/gu, " ").replace(/\s+/g, " ").trim().toLowerCase().slice(0, 60);
+    if (t && !out.includes(t)) out.push(t);
+    if (out.length >= 10) break;
+  }
+  return out;
+}
 const int = (v: unknown, lo: number, hi: number, d: number) => { const n = Math.floor(Number(v)); return Number.isFinite(n) && n >= lo && n <= hi ? n : d; };
 
 export function normalizeAutoSettings(raw: any): AutoSettings {
@@ -21,7 +35,7 @@ export function normalizeAutoSettings(raw: any): AutoSettings {
     const b = r.boards && typeof r.boards === "object" && r.boards[id] && typeof r.boards[id] === "object" ? r.boards[id] : {};
     boards[id] = { on: typeof b.on === "boolean" ? b.on : DEF_BOARDS[id].on, cap: int(b.cap, 1, 100, DEF_BOARDS[id].cap) };
   }
-  return { enabled: r.enabled === true, run_time: t, boards, daily_cap: int(r.daily_cap, 1, 200, 20), min_match: int(r.min_match, 0, 100, 0) };
+  return { enabled: r.enabled === true, run_time: t, boards, daily_cap: int(r.daily_cap, 1, 200, 20), min_match: int(r.min_match, 0, 100, 0), roles: cleanList(r.roles), locations: cleanList(r.locations) };
 }
 
 export function normalizeBoardStatus(raw: any): BoardStatus {
