@@ -6,7 +6,7 @@
 "use strict";
 
 const $ = (id) => document.getElementById(id);
-const DEFAULT_SITE = "https://applypilot.vercel.app";
+const DEFAULT_SITE = "https://applypilot-theta.vercel.app";
 const JOB_SITES = [
   "https://*.linkedin.com/*", "https://*.naukri.com/*", "https://internshala.com/*", "https://*.internshala.com/*",
   "https://*.indeed.com/*", "https://*.indeed.co.in/*", "https://*.greenhouse.io/*", "https://*.lever.co/*",
@@ -80,7 +80,7 @@ $("signOut").addEventListener("click", async (e) => {
 $("saveKey").addEventListener("click", async () => {
   let api = $("api").value.trim().replace(/\/+$/, "");
   const key = $("key").value.trim();
-  try { const u = new URL(api); if (!/^https?:$/.test(u.protocol)) throw 0; api = u.origin; } catch { return say("Enter a valid site URL, e.g. https://applypilot.vercel.app", "bad", "gearMsg"); }
+  try { const u = new URL(api); if (!/^https?:$/.test(u.protocol)) throw 0; api = u.origin; } catch { return say("Enter a valid site URL, e.g. https://applypilot-theta.vercel.app", "bad", "gearMsg"); }
   if (!/^ap_[A-Za-z0-9_-]{20,80}$/.test(key)) return say("That does not look like an ApplyPilot key (starts with ap_).", "bad", "gearMsg");
   const prev = settings; settings = { api, key, site: api };
   try { await apiCall("/api/me", { method: "GET" }); await chrome.storage.local.set({ api, key, site: api }); say("Connected", "ok", "gearMsg"); }

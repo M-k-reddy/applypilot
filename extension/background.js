@@ -508,7 +508,7 @@ importScripts("boards.js", "boardrunner.js");
 // Sign in: the side panel opens <site>/dashboard/extension/connect?ext=<id>. That page mints a key with the user's
 // website session and hands it back either via chrome.runtime.sendMessage(extId) (externally_connectable sites)
 // or via window.postMessage, which connect.js (injected into the pairing tab only) relays here.
-const DEFAULT_SITE = "https://applypilot.vercel.app";
+const DEFAULT_SITE = "https://applypilot-theta.vercel.app";
 const KEY_RE = /^ap_[A-Za-z0-9_-]{20,80}$/;
 const originOf = (u) => { try { return new URL(u).origin; } catch { return ""; } };
 async function siteOrigin() { const { site, api } = await chrome.storage.local.get(["site", "api"]); return originOf(site || api || DEFAULT_SITE) || DEFAULT_SITE; }
