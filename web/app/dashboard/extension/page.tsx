@@ -39,12 +39,12 @@ export default function ExtensionPage() {
           </ol>
         </div>
         <div className="card">
-          <div className="card-head"><h3>2 · Connect</h3></div>
-          <p className="small">In the side panel, open <b>Settings</b> and paste:</p>
-          <div className="field" style={{ marginBottom: 10 }}><span>API URL</span>
+          <div className="card-head"><h3>2 · Sign in</h3></div>
+          <p className="small">Click <b>Sign in</b> in the side panel. It opens this site, you press <b>Connect extension</b>, and you are done. No keys to copy.</p>
+          <p className="small muted">Fallback: side panel → settings gear → Advanced, then paste this site URL and a key from below.</p>
+          <div className="field" style={{ marginBottom: 0 }}><span>Site URL</span>
             <div className="row"><div className="codebox" style={{ flex: 1 }}>{origin || "…"}</div><button className="btn btn-sm" onClick={() => copy(origin)}>Copy</button></div>
           </div>
-          <p className="small mb-0">…and an API key from below. Keys last until you revoke them.</p>
         </div>
       </div>
 
@@ -78,7 +78,7 @@ export default function ExtensionPage() {
         <h3>What the extension will and won&apos;t do</h3>
         <div className="grid grid-2 small">
           <ul style={{ paddingLeft: 18, margin: 0 }}><li>Runs only when you click it, on the tab you are looking at.</li><li>Fills fields in <b style={{ color: "#2ecc71" }}>green</b>, leaves questions for you in <b style={{ color: "#ff9f1c" }}>orange</b>.</li><li>Outlines the Next/Submit button in <b style={{ color: "#4f7cff" }}>blue</b> for you to click.</li></ul>
-          <ul style={{ paddingLeft: 18, margin: 0 }}><li>Review mode never clicks Submit. Optional Auto mode (off by default, side panel → Auto) submits only fully confident applications and sends the rest to Needs review. LinkedIn is never automated.</li><li>Never fills salary, personal or legal questions.</li><li>Skips password and hidden fields. CAPTCHAs and OTPs stay with you.</li></ul>
+          <ul style={{ paddingLeft: 18, margin: 0 }}><li>Review mode never clicks Submit. Optional Auto mode (off by default, the Auto switch in the side panel header; settings on the Auto-apply page) submits only fully confident applications and sends the rest to Needs review. LinkedIn is never automated.</li><li>Never fills salary, personal or legal questions.</li><li>Skips password and hidden fields. CAPTCHAs and OTPs stay with you.</li></ul>
         </div>
       </div>
     </>

@@ -9,162 +9,119 @@
 <body>
   <header class="top">
     <div class="brand"><img src="icons/icon32.png" alt="" width="24" height="24"> ApplyPilot</div>
-    <button id="settingsBtn" class="icon-btn" aria-label="Settings" title="Settings" aria-expanded="false">⚙</button>
+    <div class="row tight">
+      <label class="auto-switch" title="Auto mode applies in a background tab, only when confident">
+        <span class="sdot" id="autoDot" aria-hidden="true"></span><span>Auto</span>
+        <input id="autoEnabled" type="checkbox" role="switch" aria-label="Auto mode">
+      </label>
+      <button id="gearBtn" class="icon-btn" aria-label="Settings" title="Settings">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+      </button>
+    </div>
   </header>
 
-  <section id="settings" class="card" hidden aria-label="Settings">
-    <h2>Connect your account</h2>
-    <p class="muted">Get both values from Dashboard → Extension.</p>
-    <label class="field"><span>API URL</span><input id="api" type="url" placeholder="https://your-app.vercel.app" autocomplete="off"></label>
-    <label class="field"><span>API key</span><input id="key" type="password" placeholder="ap_…" autocomplete="off"></label>
-    <label class="field"><span>Resume PDF (auto-attached to upload fields)</span><input id="resume" type="file" accept="application/pdf"></label>
-    <p id="resumeName" class="muted small"></p>
-    <div class="row">
-      <button id="saveSettings" class="btn primary">Save</button>
-      <button id="openDash" class="btn">Open dashboard</button>
-    </div>
-    <div class="divider"></div>
-    <h3>Site access</h3>
-    <p class="muted small">ApplyPilot only reads a page when you click it. If Chrome blocks access on a site, allow it here once.</p>
-    <div class="row">
-      <button id="allowJobSites" class="btn">Allow on job boards</button>
-      <button id="allowAll" class="btn">Allow on all sites</button>
-    </div>
-    <p id="settingsMsg" class="msg" role="status" aria-live="polite"></p>
-  </section>
-
-  <nav class="tabs" role="tablist" aria-label="ApplyPilot">
-    <button role="tab" id="tab-job" aria-controls="panel-job" aria-selected="true">Job</button>
-    <button role="tab" id="tab-fill" aria-controls="panel-fill" aria-selected="false">Autofill</button>
-    <button role="tab" id="tab-answers" aria-controls="panel-answers" aria-selected="false">Answers</button>
-    <button role="tab" id="tab-auto" aria-controls="panel-auto" aria-selected="false">Auto</button>
-  </nav>
-
   <main>
-    <section id="panel-job" role="tabpanel" aria-labelledby="tab-job">
-      <div id="jobCard" class="card">
-        <div class="row between"><span class="muted small" id="jobSource">Looking for a job on this page…</span><button id="detectBtn" class="btn sm">↻ Detect</button></div>
-        <div id="jobBody" hidden>
-          <div class="job-head">
-            <div class="ring" id="ring" role="meter" aria-label="ATS keyword match" aria-valuemin="0" aria-valuemax="100"><b id="ringVal">–</b></div>
-            <div class="job-meta">
-              <h2 id="jobTitle"></h2>
-              <p id="jobCompany" class="muted"></p>
-            </div>
-          </div>
-          <p class="small muted" id="scoreNote"></p>
-          <div id="chips" class="chips"></div>
-          <div class="stack">
-            <button id="saveJob" class="btn primary">☆ Save to tracker</button>
-            <button id="tailorJob" class="btn grad">⇄ Tailor resume</button>
-            <button id="coverJob" class="btn">✎ Cover letter</button>
-            <button id="fitJob" class="btn ghost">◎ AI fit analysis</button>
-          </div>
-          <div id="fitOut" hidden></div>
-          <div id="coverOut" hidden>
-            <label class="field"><span>Cover letter (editable)</span><textarea id="coverText" rows="12"></textarea></label>
-            <div class="row"><button id="copyCover" class="btn sm">Copy</button><span id="coverWords" class="muted small"></span></div>
-          </div>
-        </div>
-      </div>
-      <p id="jobMsg" class="msg" role="status" aria-live="polite"></p>
+    <!-- Status card: one state line + ONE primary button -->
+    <section class="card" id="statusCard" aria-live="polite">
+      <h2 id="stTitle">Loading…</h2>
+      <p id="stLine" class="muted"></p>
+      <ol id="stChecklist" class="checklist" hidden>
+        <li id="ck1">Sign in</li>
+        <li id="ck2"><a href="#" data-web="/dashboard/profile">Upload your resume</a> on the website</li>
+        <li id="ck3">Connect your job boards</li>
+      </ol>
+      <div id="stProgress" class="progress" hidden><span id="stBar"></span></div>
+      <button id="primary" class="btn primary full" hidden></button>
+      <p class="links"><a href="#" id="stLink" hidden></a></p>
     </section>
 
-    <section id="panel-fill" role="tabpanel" aria-labelledby="tab-fill" hidden>
-      <div class="card">
-        <h2>Fill this page</h2>
-        <p class="muted small">Fills what your profile can answer. <span class="dot g"></span>filled · <span class="dot o"></span>needs you · <span class="dot b"></span>you click it. In this Review mode ApplyPilot never clicks Submit.</p>
-        <button id="fillBtn" class="btn primary big">⚡ Fill this page</button>
-        <p class="muted small">Multi-step form? Click again on each step. It counts as one autofill.</p>
-      </div>
-      <div id="fillOut" class="card" hidden>
-        <p id="fillSummary"></p>
-        <div id="askList"></div>
-        <div class="stack">
-          <button id="saveAnswers" class="btn" hidden>★ Save my answers</button>
-          <button id="markApplied" class="btn ok">✓ I submitted it</button>
-        </div>
-      </div>
-      <p id="fillMsg" class="msg" role="status" aria-live="polite"></p>
-    </section>
-
-    <section id="panel-answers" role="tabpanel" aria-labelledby="tab-answers" hidden>
-      <div class="card">
-        <div class="row between"><h2>Quick copy</h2><button id="reloadAnswers" class="btn sm">↻</button></div>
-        <label class="field"><span class="sr-only">Search answers</span><input id="answerSearch" type="search" placeholder="Search answers…"></label>
-        <div id="answerList" class="answers"></div>
-      </div>
-      <p id="answersMsg" class="msg" role="status" aria-live="polite"></p>
-    </section>
-    <section id="panel-auto" role="tabpanel" aria-labelledby="tab-auto" hidden>
-      <div class="card">
-        <div class="row between">
-          <h2>Auto mode</h2>
-          <label class="switch"><input id="autoEnabled" type="checkbox" role="switch" aria-describedby="autoWarn"><span id="autoEnabledLabel">Off</span></label>
-        </div>
-        <p id="autoWarn" class="muted small">Optional. When on, ApplyPilot works through the <b>Saved</b> jobs in your tracker one at a time in a background tab and <b>clicks Submit for you</b>, but only when every required field is filled, nothing needs your answer (salary, personal, extra files, unknown) and there is no CAPTCHA or sign-in. Everything else moves to <b>Needs review</b>. LinkedIn is never automated. Review mode (Autofill tab) still leaves Submit to you.</p>
-        <label class="field"><span>Daily cap (submissions per day, resets at midnight IST)</span><input id="autoCap" type="number" min="1" max="200" step="1" value="20"></label>
-        <div class="discover">
-          <div class="row between">
-            <h3>Find jobs automatically</h3>
-            <label class="switch"><input id="autoDiscover" type="checkbox" role="switch" aria-describedby="autoDiscoverHelp" checked><span id="autoDiscoverLabel">On</span></label>
+    <!-- Context card: the job post or the form on this tab -->
+    <section class="card" id="ctxCard" hidden>
+      <div id="jobView" hidden>
+        <div class="job-head">
+          <div class="ring" id="ring" role="meter" aria-label="ATS keyword match" aria-valuemin="0" aria-valuemax="100"><b id="ringVal">–</b></div>
+          <div class="job-meta">
+            <h2 id="jobTitle"></h2>
+            <p id="jobCompany" class="muted"></p>
           </div>
-          <p id="autoDiscoverHelp" class="muted small">When the queue is empty, Auto mode finds fresh entry-level jobs that match your profile (Greenhouse and Lever forms first, then other boards), adds them to your tracker as <b>Saved · Auto</b> and applies with the same safety checks. No AI credits are used to find them. Leave the fields blank to use your profile.</p>
-          <div id="autoDiscoverFields">
-            <label class="field"><span>Keywords (optional, comma separated)</span><input id="autoKeywords" type="text" maxlength="300" placeholder="e.g. react, frontend, python" autocomplete="off"></label>
-            <label class="field"><span>Location (optional)</span><input id="autoLocation" type="text" maxlength="200" placeholder="From your profile, e.g. Hyderabad, Bengaluru" autocomplete="off"></label>
-            <div class="row between">
-              <label class="switch"><input id="autoRemote" type="checkbox" checked><span>Remote OK</span></label>
-              <label class="field inline"><span>Min fit score</span><input id="autoMinScore" type="number" min="0" max="100" step="5" value="30" style="width:72px"></label>
+        </div>
+        <p class="small muted" id="scoreNote"></p>
+        <div class="row actions">
+          <div class="menu-wrap">
+            <button id="aiBtn" class="btn ghost" aria-haspopup="menu" aria-expanded="false">AI tools <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" aria-hidden="true"><path d="m6 9 6 6 6-6"/></svg></button>
+            <div id="aiMenu" class="menu" role="menu" hidden>
+              <button role="menuitem" data-ai="tailor">Tailor resume<span>opens the website</span></button>
+              <button role="menuitem" data-ai="cover">Cover letter</button>
+              <button role="menuitem" data-ai="fit">Fit analysis</button>
             </div>
           </div>
+          <button id="saveJobSecondary" class="btn ghost" hidden>Save job</button>
         </div>
-        <div id="autoAccess" class="access" hidden>
-          <p class="small">Auto mode needs site access to open job pages in the background. Allow all sites (recommended, employers use many domains) or only the main job boards.</p>
-          <div class="row">
-            <button id="autoAllowAll" class="btn">Allow on all sites</button>
-            <button id="autoAllowBoards" class="btn">Allow on job boards</button>
-          </div>
-        </div>
-        <p id="autoAccessOk" class="muted small" hidden></p>
-        <div class="row">
-          <button id="autoStart" class="btn primary">▶ Start</button>
-          <button id="autoStop" class="btn">■ Stop</button>
-        </div>
-        <p id="autoMsg" class="msg" role="status" aria-live="polite"></p>
-      </div>
-      <div class="card" id="boardCard">
-        <h3>Zero-click Auto-apply (recommended jobs)</h3>
-        <p class="muted small">Applies to the jobs each board recommends for you, inside your signed-in Chrome, one at a time. Same safety gates: daily caps, 25–75 s pauses, stops on CAPTCHA, sign-in wall or limit message, and unsure answers go to <b>Needs review</b>. LinkedIn is never automated. Needs Auto mode on.</p>
-        <p id="boardSchedule" class="small"></p>
-        <div id="boardList"></div>
-        <p class="small muted">Settings are edited on the website. <a href="#" id="boardEdit">Edit Auto-apply settings ↗</a></p>
-        <div class="row">
-          <button id="boardStart" class="btn primary">▶ Run now</button>
-          <button id="boardStop" class="btn">■ Stop</button>
-          <button id="boardCheck" class="btn">Check sign-ins</button>
-        </div>
-        <p id="boardStatus" class="small" role="status" aria-live="polite"></p>
-        <p class="small">Applied today: <b id="boardToday">0</b></p>
-        <p id="boardMsg" class="msg" role="status" aria-live="polite"></p>
-      </div>
-      <div class="card" aria-live="polite">
-        <p id="autoStatus" class="small"></p>
-        <p id="autoCurrent" class="small muted"></p>
-        <div class="stats">
-          <div><b id="autoToday">0</b><span>applied today</span></div>
-          <div><b id="autoFoundToday">0</b><span>found today</span></div>
-          <div><b id="autoSubmitted">0</b><span>submitted</span></div>
-          <div><b id="autoSkipped">0</b><span>skipped</span></div>
-          <div><b id="autoLeft">0</b><span>in queue</span></div>
+        <div id="fitOut" class="fit" hidden></div>
+        <div id="coverOut" hidden>
+          <label class="field"><span>Cover letter (editable)</span><textarea id="coverText" rows="10"></textarea></label>
+          <p class="links"><a href="#" id="copyCover">Copy</a> <span id="coverWords" class="muted small"></span></p>
         </div>
       </div>
-      <div class="card">
-        <div class="row between"><h3>Log</h3><button id="autoClearLog" class="btn sm">Clear</button></div>
-        <ol id="autoLog" class="log"></ol>
+      <div id="formView" hidden>
+        <h2 id="formTitle">Application form</h2>
+        <p class="small muted" id="formNote">Fills what your profile can answer. You review and click Submit yourself.</p>
+      </div>
+      <div id="reportView" hidden>
+        <h2 id="reportTitle"></h2>
+        <p class="small muted" id="reportNote"></p>
+        <div id="askList" class="asks"></div>
       </div>
     </section>
+
+    <!-- Boards -->
+    <section class="boards" aria-label="Job board sign-in">
+      <span class="small muted">Boards</span>
+      <div id="boardChips" class="chips"></div>
+    </section>
+
+    <!-- Recent -->
+    <section class="recent">
+      <h3 class="small muted">Recent</h3>
+      <ol id="recent" class="log"></ol>
+      <p class="links small"><a href="#" data-web="/dashboard/tracker">Open dashboard ↗</a><a href="#" id="runSaved">Apply to saved jobs only</a></p>
+    </section>
+
+    <p id="msg" class="msg" role="status" aria-live="polite"></p>
   </main>
+
+  <!-- First-time Auto confirm -->
+  <dialog id="autoSheet" class="sheet" aria-labelledby="autoSheetTitle">
+    <h2 id="autoSheetTitle">Turn on Auto mode?</h2>
+    <p class="small">ApplyPilot will apply in a background tab and <b>click Submit for you</b>, but only when every required field is filled and nothing needs your answer. Everything else goes to <b>Needs review</b>. It stops on CAPTCHA, sign-in walls and limit messages, never exceeds your daily cap, and never touches LinkedIn.</p>
+    <p class="small muted">Cap, roles, locations and minimum match are set on the website.</p>
+    <div class="row end">
+      <button id="autoCancel" class="btn ghost">Cancel</button>
+      <button id="autoConfirm" class="btn primary">Turn on</button>
+    </div>
+  </dialog>
+
+  <!-- Settings sheet -->
+  <dialog id="gearSheet" class="sheet" aria-labelledby="gearTitle">
+    <div class="row between"><h2 id="gearTitle">Settings</h2><button id="gearClose" class="btn ghost sm" aria-label="Close">Close</button></div>
+    <p class="small" id="acctLine"></p>
+    <p class="small muted" id="accessLine"></p>
+    <p class="small muted" id="resumeLine"></p>
+    <ul class="linklist small">
+      <li><a href="#" data-web="/dashboard/auto">Auto-apply settings (cap, roles, location, min match) ↗</a></li>
+      <li><a href="#" data-web="/dashboard/profile">Resume, profile and saved answers ↗</a></li>
+      <li><a href="#" data-web="/dashboard/extension">Manage extension keys ↗</a></li>
+    </ul>
+    <details class="advanced">
+      <summary class="small">Advanced: connect with a key</summary>
+      <label class="field"><span>Site URL</span><input id="api" type="url" placeholder="https://applypilot.vercel.app" autocomplete="off"></label>
+      <label class="field"><span>API key</span><input id="key" type="password" placeholder="ap_…" autocomplete="off"></label>
+      <button id="saveKey" class="btn sm">Save</button>
+    </details>
+    <p id="gearMsg" class="msg" role="status" aria-live="polite"></p>
+    <p class="links small"><a href="#" id="signOut">Sign out</a></p>
+  </dialog>
+
   <script src="sidepanel.js"></script>
 </body>
 </html>

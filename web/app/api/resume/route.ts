@@ -53,3 +53,17 @@ ${text.slice(0, 20000)}
   await recordUsage(db, user.id, "parse");
   return Response.json({ profile });
 });
+
+// GET -> the latest uploaded resume PDF (used by the extension to auto-attach it to upload fields; v2.5).
+// HEAD-like metadata with ?meta=1 -> { name, uploaded_at } so the extension only downloads when it changed.
+export const GET = handle(async (req) => {
+  const { user, db } = await requireUser(req);
+  const { data, error } = await db.from("resumes").select("storage_path, created_at").eq("user_id", user.id).order("created_at", { ascending: false }).limit(1).maybeSingle();
+  if (error) throw new HttpError(500, error.message);
+  if (!data?.storage_path) throw new HttpError(404, "No resume uploaded yet. Upload one in Dashboard → Profile.");
+  const name = "resume.pdf";
+  if (new URL(req.url).searchParams.get("meta") === "1") return Response.json({ name, uploaded_at: data.created_at });
+  const dl = await db.storage.from("resumes").download(data.storage_path);
+  if (dl.error || !dl.data) throw new HttpError(500, "Could not read the stored resume.");
+  return new Response(await dl.data.arrayBuffer(), { headers: { "Content-Type": "application/pdf", "Cache-Control": "no-store", "X-Uploaded-At": String(data.created_at) } });
+});

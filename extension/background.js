@@ -50,19 +50,28 @@ async function getDaily() {
 const bumpDaily = () => serial(async () => { const d = await getDaily(); d.count += 1; await chrome.storage.local.set({ autoDaily: d }); return d; });
 const bumpDiscovered = (n) => serial(async () => { const d = await getDaily(); d.discovered = (d.discovered || 0) + n; await chrome.storage.local.set({ autoDaily: d }); return d; });
 
-/** Discovery settings from the Auto tab. "Find jobs automatically" defaults to on. */
+/** v2.5: Auto settings are edited on the website (/dashboard/auto) and cached in storage.serverAuto by boardrunner.js.
+ *  Website values win; older locally saved values (v2.4 Auto tab) and defaults are the fallback. */
+async function serverAutoSettings() { const v = (await chrome.storage.local.get("serverAuto")).serverAuto; return (v && v.settings) || null; }
+/** Discovery settings. "Find jobs automatically" defaults to on. */
 async function getDiscoverySettings() {
   const d = await chrome.storage.local.get(["autoDiscover", "autoKeywords", "autoLocation", "autoRemote", "autoMinScore"]);
-  const min = Number(d.autoMinScore);
+  const s = await serverAutoSettings();
+  const list = (a) => (Array.isArray(a) && a.length ? a.map(String).join(", ") : "");
+  const min = Number(d.autoMinScore), smin = Number(s && s.min_match);
   return {
     on: d.autoDiscover !== false,
-    keywords: String(d.autoKeywords || "").slice(0, 300),
-    location: String(d.autoLocation || "").slice(0, 200),
+    keywords: (list(s && s.roles) || String(d.autoKeywords || "")).slice(0, 300),
+    location: (list(s && s.locations) || String(d.autoLocation || "")).slice(0, 200),
     remote: d.autoRemote !== false,
-    minScore: Number.isFinite(min) && min >= 0 && min <= 100 ? Math.round(min) : 30
+    minScore: Number.isFinite(smin) && smin > 0 && smin <= 100 ? Math.round(smin) : Number.isFinite(min) && min >= 0 && min <= 100 ? Math.round(min) : 30
   };
 }
-async function getCap() { const c = Number((await chrome.storage.local.get("autoCap")).autoCap); return Number.isFinite(c) && c >= 1 ? Math.min(200, Math.floor(c)) : DEFAULT_CAP; }
+async function getCap() {
+  const s = await serverAutoSettings(); const sc = Number(s && s.daily_cap);
+  if (Number.isFinite(sc) && sc >= 1) return Math.min(200, Math.floor(sc));
+  const c = Number((await chrome.storage.local.get("autoCap")).autoCap); return Number.isFinite(c) && c >= 1 ? Math.min(200, Math.floor(c)) : DEFAULT_CAP;
+}
 
 // ───────────────────────── API (same contract as the side panel)
 async function api(path, { method = "POST", body } = {}) {
@@ -494,3 +503,77 @@ getState().then(async (s) => {
 // Loaded last so the helpers above (api, log, serial, getDaily, getCap, istDay, sleep, rand, hostOf, noHash,
 // Cancelled, guard, wait, FATAL, getState, getDiscoverySettings) exist before the runner's top-level code runs.
 importScripts("boards.js", "boardrunner.js");
+
+// ───────────────────────── v2.5 Sign in (pairing) + in-page button
+// Sign in: the side panel opens <site>/dashboard/extension/connect?ext=<id>. That page mints a key with the user's
+// website session and hands it back either via chrome.runtime.sendMessage(extId) (externally_connectable sites)
+// or via window.postMessage, which connect.js (injected into the pairing tab only) relays here.
+const DEFAULT_SITE = "https://applypilot.vercel.app";
+const KEY_RE = /^ap_[A-Za-z0-9_-]{20,80}$/;
+const originOf = (u) => { try { return new URL(u).origin; } catch { return ""; } };
+async function siteOrigin() { const { site, api } = await chrome.storage.local.get(["site", "api"]); return originOf(site || api || DEFAULT_SITE) || DEFAULT_SITE; }
+
+async function acceptKey(key, fromOrigin) {
+  if (typeof key !== "string" || !KEY_RE.test(key)) return { ok: false, error: "Invalid key." };
+  const want = await siteOrigin();
+  const ok = fromOrigin === want || /^http:\/\/localhost(:\d+)?$/.test(fromOrigin) || fromOrigin === DEFAULT_SITE;
+  if (!ok) return { ok: false, error: "This site is not your ApplyPilot site." };
+  let r;
+  try { r = await fetch(fromOrigin + "/api/me", { headers: { Authorization: `Bearer ${key}` } }); } catch { return { ok: false, error: "Could not reach ApplyPilot." }; }
+  if (!r.ok) return { ok: false, error: `Key check failed (${r.status}).` };
+  await chrome.storage.local.set({ api: fromOrigin, key, site: fromOrigin, signedInAt: Date.now() });
+  const { connectTabId } = await chrome.storage.session.get("connectTabId");
+  await chrome.storage.session.remove("connectTabId");
+  fetchAutoSettings().catch(() => {});
+  return { ok: true, closeTab: connectTabId ?? null };
+}
+chrome.runtime.onMessageExternal.addListener((msg, sender, sendResponse) => {
+  if (!msg || msg.type !== "ap:connect") return;
+  acceptKey(msg.key, originOf(sender.url || sender.origin || "")).then(sendResponse, (e) => sendResponse({ ok: false, error: String(e.message || e) }));
+  return true;
+});
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+  if (sender.id !== chrome.runtime.id || !msg) return;
+  if (msg.type === "ap:connect" && sender.tab) {
+    chrome.storage.session.get("connectTabId").then(({ connectTabId }) => {
+      if (connectTabId !== sender.tab.id) return sendResponse({ ok: false, error: "Start Sign in from the ApplyPilot side panel." });
+      return acceptKey(msg.key, originOf(sender.url || sender.tab.url || "")).then(sendResponse);
+    }).catch((e) => sendResponse({ ok: false, error: String(e.message || e) }));
+    return true;
+  }
+  if (msg.type === "connect:open") {
+    chrome.tabs.create({ url: msg.url }).then((t) => chrome.storage.session.set({ connectTabId: t.id })).then(() => sendResponse({ ok: true }), (e) => sendResponse({ ok: false, error: String(e.message || e) }));
+    return true;
+  }
+  if (msg.type === "fab:action" && sender.tab) {
+    // Must run synchronously inside the click's user gesture.
+    chrome.sidePanel.open({ tabId: sender.tab.id }).catch(() => {});
+    chrome.storage.session.set({ fabAction: { tabId: sender.tab.id, at: Date.now() } });
+    sendResponse({ ok: true });
+  }
+});
+chrome.tabs.onUpdated.addListener(async (tabId, info) => {
+  if (info.status !== "complete") return;
+  const { connectTabId } = await chrome.storage.session.get("connectTabId");
+  if (connectTabId !== tabId) return;
+  chrome.scripting.executeScript({ target: { tabId }, files: ["connect.js"] }).catch(() => {}); // fine without permission: external messaging covers the default site
+});
+
+// In-page button: registered only on supported boards we have host access to. Never LinkedIn.
+const FAB_MATCHES = [
+  "https://www.naukri.com/*", "https://internshala.com/*", "https://in.indeed.com/*", "https://smartapply.indeed.com/*", "https://www.foundit.in/*",
+  "https://boards.greenhouse.io/*", "https://job-boards.greenhouse.io/*", "https://jobs.lever.co/*", "https://jobs.ashbyhq.com/*"
+];
+async function registerFab() {
+  try {
+    const allowed = [];
+    for (const m of FAB_MATCHES) if (await chrome.permissions.contains({ origins: [m] })) allowed.push(m);
+    const ex = await chrome.scripting.getRegisteredContentScripts({ ids: ["ap-fab"] });
+    if (ex.length) await chrome.scripting.unregisterContentScripts({ ids: ["ap-fab"] });
+    if (allowed.length) await chrome.scripting.registerContentScripts([{ id: "ap-fab", matches: allowed, excludeMatches: ["https://*.linkedin.com/*"], js: ["fab.js"], runAt: "document_idle", persistAcrossSessions: true }]);
+  } catch (e) { console.warn("ApplyPilot: fab register failed", e); }
+}
+chrome.runtime.onInstalled.addListener(registerFab);
+chrome.runtime.onStartup.addListener(registerFab);
+chrome.permissions.onAdded.addListener(registerFab);
+chrome.permissions.onRemoved.addListener(registerFab);

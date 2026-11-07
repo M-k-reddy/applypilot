@@ -1,19 +1,32 @@
-// ApplyPilot side panel. All API calls happen here (extension origin), never in page scripts.
-// Page access is on demand: chrome.scripting + activeTab, with optional host permissions as a fallback.
-// Security: every piece of page/API text is rendered with textContent, never innerHTML.
-// The Auto tab only shows state and sends start/stop messages; the Auto mode runner lives in background.js.
+// ApplyPilot side panel v2.5: no tabs. Header (Auto switch, gear) · status card with ONE primary button · context card
+// (job post or form on this tab) · board sign-in chips · recent activity.
+// All API calls happen here (extension origin), never in page scripts. Page access is on demand (activeTab + optional
+// host permissions). Every piece of page/API text is rendered with textContent, never innerHTML.
+// The Auto runners live in background.js / boardrunner.js; this panel only shows state and sends start/stop.
 "use strict";
 
 const $ = (id) => document.getElementById(id);
+const DEFAULT_SITE = "https://applypilot.vercel.app";
 const JOB_SITES = [
   "https://*.linkedin.com/*", "https://*.naukri.com/*", "https://internshala.com/*", "https://*.internshala.com/*",
   "https://*.indeed.com/*", "https://*.indeed.co.in/*", "https://*.greenhouse.io/*", "https://*.lever.co/*",
-  "https://*.myworkdayjobs.com/*", "https://*.myworkdaysite.com/*"
+  "https://*.myworkdayjobs.com/*", "https://*.myworkdaysite.com/*", "https://jobs.ashbyhq.com/*"
 ];
+const ALL_SITES = ["https://*/*", "http://*/*"];
 const NEED_ACCESS = "NEED_ACCESS";
+const BOARDS = [
+  { id: "naukri", name: "Naukri", login: "https://www.naukri.com/nlogin/login" },
+  { id: "internshala", name: "Internshala", login: "https://internshala.com/login/user" },
+  { id: "indeed", name: "Indeed", login: "https://secure.indeed.com/auth?hl=en_IN&co=IN" },
+  { id: "foundit", name: "Foundit", login: "https://www.foundit.in/rio/login" }
+];
+const BOARD_DEFAULT_ON = { naukri: true, internshala: true, indeed: true, foundit: false };
 
-let settings = { api: "", key: "" };
-let current = { tabId: null, job: null, jobId: null, applicationId: null, pageBase: "", fields: new Map(), asks: [] };
+let settings = { api: "", key: "", site: DEFAULT_SITE };
+let current = { tabId: null, job: null, jobId: null, applicationId: null, pageBase: "", fields: new Map(), asks: [], saved: false };
+let page = { status: "loading", job: null, hasForm: false };   // loading | none | job | form | access | error
+let fill = null;                                                // last fill report on this tab
+let st = { autoEnabled: false, autoState: {}, boardState: {}, serverAuto: null, autoDaily: null, autoLog: [], doneSeen: 0, access: { all: false, boards: false } };
 
 // ───────── small DOM helpers (textContent only)
 function el(tag, props = {}, children = []) {
@@ -28,62 +41,80 @@ function el(tag, props = {}, children = []) {
   return n;
 }
 const clear = (n) => { while (n.firstChild) n.removeChild(n.firstChild); };
-function say(id, msg, kind = "") { const n = $(id); n.textContent = msg || ""; n.className = `msg ${kind}`; }
-function busy(btn, on, label) {
-  if (!btn) return;
-  if (on) { btn.dataset.label = btn.textContent; btn.textContent = label || "Working…"; btn.disabled = true; }
-  else { btn.textContent = btn.dataset.label || btn.textContent; btn.disabled = false; }
+function say(msg, kind = "", id = "msg") { const n = $(id); n.textContent = msg || ""; n.className = `msg ${kind}`; }
+const site = () => settings.api || settings.site || DEFAULT_SITE;
+const openWeb = (path) => chrome.tabs.create({ url: site() + path });
+const signedIn = () => !!(settings.api && settings.key);
+const istDayUI = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+document.addEventListener("click", (e) => { const a = e.target.closest && e.target.closest("a[data-web]"); if (a) { e.preventDefault(); openWeb(a.dataset.web); } });
+
+// ───────── settings / account
+async function loadSettings() {
+  const s = await chrome.storage.local.get(["api", "key", "site", "resumeName", "resumeSyncedAt"]);
+  settings = { api: s.api || "", key: s.key || "", site: s.site || s.api || DEFAULT_SITE };
+  $("api").value = settings.api || settings.site; $("key").value = settings.key;
+  $("resumeLine").textContent = s.resumeName ? `Resume for upload fields: synced from the website${s.resumeSyncedAt ? ` (${new Date(s.resumeSyncedAt).toLocaleDateString("en-IN")})` : ""}.` : "No resume synced yet. Upload one on the website.";
+}
+async function refreshAccount() {
+  if (!signedIn()) { $("acctLine").textContent = "Not signed in."; return; }
+  try { const me = await apiCall("/api/me", { method: "GET" }); $("acctLine").textContent = `Signed in as ${me.email || "your account"} · ${new URL(settings.api).host}`; st.me = me; }
+  catch (e) { $("acctLine").textContent = e.message; }
 }
 
-// ───────── settings
-async function loadSettings() {
-  const s = await chrome.storage.local.get(["api", "key", "resumeName"]);
-  settings = { api: s.api || "", key: s.key || "" };
-  $("api").value = settings.api; $("key").value = settings.key;
-  $("resumeName").textContent = s.resumeName ? `Saved resume: ${s.resumeName}` : "No resume saved for auto-attach.";
-  if (!settings.api || !settings.key) toggleSettings(true);
+// Sign in: open the website's pairing page; background.js receives the key and stores it.
+function signIn() {
+  const origin = (() => { try { return new URL(site()).origin; } catch { return DEFAULT_SITE; } })();
+  const url = `${origin}/dashboard/extension/connect?ext=${chrome.runtime.id}`;
+  const builtIn = origin === DEFAULT_SITE || /^http:\/\/localhost:3000$/.test(origin);
+  const open = () => chrome.runtime.sendMessage({ type: "connect:open", url }).then(() => say("Finish signing in on the tab that just opened.")).catch((e) => say(String(e.message || e), "bad"));
+  // A self-hosted site needs page access so the pairing relay can run there. Request it inside the click (user gesture).
+  if (builtIn) return open();
+  chrome.permissions.request({ origins: [`${origin}/*`] }).then(open, open);
 }
-function toggleSettings(show) {
-  const open = show ?? $("settings").hidden;
-  $("settings").hidden = !open; $("settingsBtn").setAttribute("aria-expanded", String(open));
-}
-$("settingsBtn").addEventListener("click", () => toggleSettings());
-$("saveSettings").addEventListener("click", async () => {
+$("signOut").addEventListener("click", async (e) => {
+  e.preventDefault();
+  await chrome.storage.local.remove(["key", "resumeB64", "resumeName", "resumeSyncedAt", "resumeUploadedAt"]);
+  await chrome.runtime.sendMessage({ type: "auto:stop" }).catch(() => {});
+  $("gearSheet").close(); say("Signed out. Your key still exists until you revoke it on the website.");
+});
+$("saveKey").addEventListener("click", async () => {
   let api = $("api").value.trim().replace(/\/+$/, "");
   const key = $("key").value.trim();
-  try { const u = new URL(api); if (!/^https?:$/.test(u.protocol)) throw 0; api = u.origin; } catch { return say("settingsMsg", "Enter a valid API URL, e.g. https://your-app.vercel.app", "bad"); }
-  if (!/^ap_[A-Za-z0-9_-]{20,80}$/.test(key)) return say("settingsMsg", "That does not look like an ApplyPilot key (starts with ap_).", "bad");
-  const data = { api, key };
-  const f = $("resume").files[0];
-  if (f) {
-    if (f.type !== "application/pdf" || f.size > 5 * 1024 * 1024) return say("settingsMsg", "Resume must be a PDF under 5 MB.", "bad");
-    data.resumeB64 = await new Promise((r) => { const fr = new FileReader(); fr.onload = () => r(fr.result); fr.readAsDataURL(f); });
-    data.resumeName = f.name;
-  }
-  await chrome.storage.local.set(data);
-  settings = { api, key };
-  try { await apiCall("/api/me", { method: "GET" }); say("settingsMsg", "Connected ✓", "ok"); setTimeout(() => toggleSettings(false), 700); loadAnswers(); detect(); }
-  catch (e) { say("settingsMsg", e.message, "bad"); }
-  if (data.resumeName) $("resumeName").textContent = `Saved resume: ${data.resumeName}`;
+  try { const u = new URL(api); if (!/^https?:$/.test(u.protocol)) throw 0; api = u.origin; } catch { return say("Enter a valid site URL, e.g. https://applypilot.vercel.app", "bad", "gearMsg"); }
+  if (!/^ap_[A-Za-z0-9_-]{20,80}$/.test(key)) return say("That does not look like an ApplyPilot key (starts with ap_).", "bad", "gearMsg");
+  const prev = settings; settings = { api, key, site: api };
+  try { await apiCall("/api/me", { method: "GET" }); await chrome.storage.local.set({ api, key, site: api }); say("Connected", "ok", "gearMsg"); }
+  catch (e) { settings = prev; say(e.message, "bad", "gearMsg"); }
 });
-$("openDash").addEventListener("click", () => { if (settings.api) chrome.tabs.create({ url: `${settings.api}/dashboard` }); else say("settingsMsg", "Add the API URL first.", "bad"); });
-// Permission requests must start synchronously inside the click handler (user gesture).
-$("allowJobSites").addEventListener("click", () => {
-  chrome.permissions.request({ origins: JOB_SITES }).then((ok) => { say("settingsMsg", ok ? "Allowed on job boards ✓" : "Not allowed.", ok ? "ok" : "bad"); if (ok) detect(); }).catch((e) => say("settingsMsg", String(e.message || e), "bad"));
-});
-$("allowAll").addEventListener("click", () => {
-  chrome.permissions.request({ origins: ["https://*/*", "http://*/*"] }).then((ok) => { say("settingsMsg", ok ? "Allowed on all sites ✓ (still only runs when you click)" : "Not allowed.", ok ? "ok" : "bad"); if (ok) detect(); }).catch((e) => say("settingsMsg", String(e.message || e), "bad"));
-});
+$("gearBtn").addEventListener("click", async () => { say("", "", "gearMsg"); await refreshAccount(); renderAccessLine(); $("gearSheet").showModal(); });
+$("gearClose").addEventListener("click", () => $("gearSheet").close());
+
+// Resume: uploaded on the website, synced down for upload fields (autofill.js / boardpage.js read storage.resumeB64).
+async function syncResume() {
+  if (!signedIn()) return;
+  try {
+    const meta = await apiCall("/api/resume?meta=1", { method: "GET" });
+    const { resumeUploadedAt } = await chrome.storage.local.get("resumeUploadedAt");
+    if (resumeUploadedAt === meta.uploaded_at) return;
+    const r = await fetch(settings.api + "/api/resume", { headers: { Authorization: `Bearer ${settings.key}` } });
+    if (!r.ok) return;
+    const blob = await r.blob();
+    if (blob.size > 5 * 1024 * 1024) return;
+    const b64 = await new Promise((res) => { const fr = new FileReader(); fr.onload = () => res(fr.result); fr.readAsDataURL(blob); });
+    await chrome.storage.local.set({ resumeB64: b64, resumeName: meta.name || "resume.pdf", resumeUploadedAt: meta.uploaded_at, resumeSyncedAt: Date.now() });
+    loadSettings();
+  } catch { /* no resume yet, or an older server: keep any locally saved copy */ }
+}
 
 // ───────── API
 async function apiCall(path, { method = "POST", body } = {}) {
-  if (!settings.api || !settings.key) { toggleSettings(true); throw new Error("Connect your account in Settings first."); }
+  if (!signedIn()) throw new Error("Sign in first.");
   let r;
   try {
     r = await fetch(settings.api + path, { method, headers: { "Content-Type": "application/json", Authorization: `Bearer ${settings.key}` }, body: body ? JSON.stringify(body) : undefined });
-  } catch { throw new Error("Could not reach the ApplyPilot server. Check the API URL in Settings."); }
+  } catch { throw new Error("Could not reach ApplyPilot. Check your connection."); }
   let j = {}; try { j = await r.json(); } catch { /* empty */ }
-  if (r.status === 401) throw new Error("Your API key is invalid or revoked. Create a new one in Dashboard → Extension.");
+  if (r.status === 401) throw new Error("Your sign-in expired or was revoked. Sign in again.");
   if (!r.ok) throw new Error(j.error || `Error ${r.status}`);
   return j;
 }
@@ -103,9 +134,7 @@ async function exec(tabId, opts, allFrames = false) {
     throw e;
   }
 }
-const accessHelp = "ApplyPilot can't read this tab yet. Click the ApplyPilot toolbar icon while on this tab (or press Alt+Shift+A), or allow access in Settings → Site access. Chrome pages can't be read.";
 const pageBaseOf = (url) => { try { const u = new URL(url); return u.origin + u.pathname.split("/").slice(0, 4).join("/"); } catch { return ""; } };
-
 async function loadTabState(tabId) {
   const k = `tab:${tabId}`; const s = (await chrome.storage.session.get(k))[k] || {};
   current = { ...current, tabId, jobId: s.jobId || null, applicationId: s.applicationId || null, pageBase: s.pageBase || "" };
@@ -115,67 +144,181 @@ async function saveTabState() {
   await chrome.storage.session.set({ [`tab:${current.tabId}`]: { jobId: current.jobId, applicationId: current.applicationId, pageBase: current.pageBase } });
 }
 
-// ───────── tabs UI
-const TABS = ["job", "fill", "answers", "auto"];
-function showTab(name) {
-  for (const t of TABS) { $(`tab-${t}`).setAttribute("aria-selected", String(t === name)); $(`panel-${t}`).hidden = t !== name; }
-  if (name === "answers") loadAnswers();
-  if (name === "auto") { renderAuto(); renderBoards(); refreshServerAuto(); }
+// ───────── state → status card (ONE primary button)
+const running = () => !!(st.autoState.running || st.boardState.running);
+const anyRunDone = () => {
+  const b = st.boardState, a = st.autoState;
+  const pick = [b, a].filter((x) => x && !x.running && x.startedAt && x.status === "stopped").sort((x, y) => y.startedAt - x.startedAt)[0];
+  if (!pick || pick.startedAt <= st.doneSeen || Date.now() - pick.startedAt > 18 * 3600_000) return null;
+  return { at: pick.startedAt, applied: (pick.applied ?? pick.submitted) || 0, review: pick.review || 0, skipped: pick.skipped || 0, message: pick.message || "" };
+};
+function boardConn() {
+  const set = ((st.serverAuto || {}).settings || {}).boards || {};
+  const conn = (st.serverAuto || {}).board_status || {};
+  return BOARDS.map((b) => {
+    const s = set[b.id] || {}; const on = typeof s.on === "boolean" ? s.on : BOARD_DEFAULT_ON[b.id];
+    const c = conn[b.id]; return { ...b, on, connected: !c || c.connected == null ? null : !!c.connected };
+  });
 }
-TABS.forEach((t) => $(`tab-${t}`).addEventListener("click", () => showTab(t)));
-document.querySelector(".tabs").addEventListener("keydown", (e) => {
-  const i = TABS.findIndex((t) => $(`tab-${t}`).getAttribute("aria-selected") === "true");
-  if (e.key === "ArrowRight" || e.key === "ArrowLeft") { const n = TABS[(i + (e.key === "ArrowRight" ? 1 : TABS.length - 1)) % TABS.length]; showTab(n); $(`tab-${n}`).focus(); }
-});
+const nextRunLine = () => {
+  const cfg = (st.serverAuto || {}).settings;
+  const daily = st.autoDaily && st.autoDaily.day === istDayUI() ? st.autoDaily : { count: 0 };
+  const cap = (cfg && cfg.daily_cap) || 20;
+  const parts = [];
+  if (!st.autoEnabled) parts.push("Auto is off");
+  else if (cfg && cfg.enabled) parts.push(`Next auto run ${cfg.run_time} IST`);
+  else parts.push("Daily run is off on the website");
+  parts.push(`applied today ${daily.count || 0}/${cap}`);
+  return parts.join(" · ");
+};
+function liveLine() {
+  const b = st.boardState, a = st.autoState;
+  if (b.running) {
+    const name = (BOARDS.find((x) => x.id === b.board) || {}).name || "";
+    const cur = b.current ? [b.current.company, b.current.title].filter(Boolean).join(" · ") : "";
+    const wait = b.status === "waiting" && b.nextAt ? `Next in ${Math.max(0, Math.round((b.nextAt - Date.now()) / 1000))}s` : "";
+    return { line: [wait || (b.status === "collecting" ? "Collecting jobs" : "Applying"), cur, name].filter(Boolean).join(" · "), done: b.applied || 0, total: b.queued || b.found || 0 };
+  }
+  const cur = a.current && a.current.app ? [a.current.app.company, a.current.app.title].filter(Boolean).join(" · ") : "";
+  const wait = a.status === "waiting" && a.nextAt ? `Next in ${Math.max(0, Math.round((a.nextAt - Date.now()) / 1000))}s` : "";
+  return { line: [wait || (a.status === "discovering" ? "Finding matching jobs" : `Applying ${(a.submitted || 0) + (a.skipped || 0) + 1}/${Math.max(a.total || 0, 1)}`), cur].filter(Boolean).join(" · "), done: (a.submitted || 0) + (a.skipped || 0), total: a.total || 0 };
+}
 
-// ───────── Job tab
+let primaryAction = null;
+function setPrimary(label, action, kind = "primary") {
+  const b = $("primary"); b.hidden = !label; b.textContent = label || ""; b.className = `btn full ${kind}`; b.disabled = false; primaryAction = action;
+}
+function setLink(label, action) { const a = $("stLink"); a.hidden = !label; a.textContent = label || ""; a.onclick = label ? (e) => { e.preventDefault(); action(); } : null; }
+
+function render() {
+  const t = $("stTitle"), line = $("stLine");
+  $("stChecklist").hidden = true; $("stProgress").hidden = true; setLink("");
+  $("autoEnabled").checked = !!st.autoEnabled; $("autoDot").className = `sdot${st.autoEnabled ? " on" : ""}`;
+  const boards = boardConn();
+
+  if (!signedIn()) {
+    t.textContent = "Sign in to ApplyPilot"; line.textContent = "Save jobs, see your match and fill forms in one click.";
+    $("stChecklist").hidden = false; ["ck1", "ck2", "ck3"].forEach((id) => $(id).classList.remove("done"));
+    setPrimary("Sign in", signIn);
+  } else if (running()) {
+    const l = liveLine(); t.textContent = "Running"; line.textContent = l.line;
+    $("stProgress").hidden = !l.total; $("stBar").style.width = l.total ? `${Math.min(100, Math.round((l.done / l.total) * 100))}%` : "0";
+    setPrimary("Stop", stopAll, "stop");
+  } else if (fill) {
+    t.textContent = `Filled ${fill.filled} · ${fill.asks.length} need you`;
+    line.textContent = fill.submitFound ? "Check everything, then click the outlined button yourself." : "Check everything before you submit.";
+    setPrimary(current.applicationId ? "Mark submitted" : "Review on dashboard", current.applicationId ? markSubmitted : () => openWeb("/dashboard/tracker"));
+    if (current.applicationId) setLink("Review on dashboard", () => openWeb("/dashboard/tracker"));
+  } else if (page.status === "access") {
+    t.textContent = "Allow access"; line.textContent = "ApplyPilot can't read this tab yet. Allow it once (it still only acts when you click). Chrome's own pages can't be read.";
+    setPrimary("Allow access", () => requestAccess(ALL_SITES));
+  } else if (page.status === "form") {
+    t.textContent = page.job ? "Application form" : "Form on this page"; line.textContent = "Fills what your profile can answer. You click Submit.";
+    setPrimary("Fill this page", doFill);
+  } else if (page.status === "job") {
+    t.textContent = current.saved ? "Saved to your tracker" : "Job post"; line.textContent = current.saved ? "Open the apply form and press Fill this page." : "Save it to track it and apply later, or let Auto apply.";
+    setPrimary(current.saved ? "Saved" : "Save job", saveJob); if (current.saved) $("primary").disabled = true;
+  } else if (anyRunDone()) {
+    const d = anyRunDone(); t.textContent = `Applied ${d.applied} · ${d.review} to review`; line.textContent = d.message || "Run finished.";
+    setPrimary("Review on dashboard", async () => { await chrome.storage.local.set({ doneSeen: d.at }); openWeb("/dashboard/tracker"); });
+    setLink("Dismiss", () => chrome.storage.local.set({ doneSeen: d.at }));
+  } else if (st.autoEnabled && !st.access.boards) {
+    t.textContent = "Allow access"; line.textContent = "Auto mode opens job pages in a background tab and needs site access. All sites is recommended: employers use many domains.";
+    setPrimary("Allow access", () => requestAccess(ALL_SITES));
+  } else if (st.autoEnabled && boards.some((b) => b.on) && boards.filter((b) => b.on).every((b) => b.connected === false)) {
+    t.textContent = "Connect boards"; line.textContent = "Sign in to your job boards in this Chrome so Auto can apply there.";
+    setPrimary("Connect boards", () => boards.filter((b) => b.on && b.connected === false).forEach((b) => chrome.tabs.create({ url: b.login })));
+  } else {
+    t.textContent = st.autoEnabled ? "Ready" : "Ready when you are"; line.textContent = nextRunLine();
+    setPrimary("Run now", runNow);
+  }
+  renderContext(); renderChips(boards); renderRecent();
+}
+$("primary").addEventListener("click", () => { if (primaryAction) primaryAction(); });
+
+// ───────── context card
+function renderContext() {
+  const showJob = signedIn() && !fill && page.job && (page.status === "job" || page.status === "form");
+  const showForm = signedIn() && !fill && page.status === "form" && !page.job;
+  const showReport = signedIn() && !!fill;
+  $("jobView").hidden = !showJob; $("formView").hidden = !showForm; $("reportView").hidden = !showReport;
+  $("ctxCard").hidden = !(showJob || showForm || showReport);
+  $("saveJobSecondary").hidden = !(showJob && page.status === "form") || current.saved;
+  if (showReport) {
+    $("reportTitle").textContent = [fill.res.title, fill.res.company].filter(Boolean).join(" at ") || "This form";
+    $("reportNote").textContent = `${fill.asks.length ? "Click a field to jump to it." : "Nothing left for you."} ${fill.res.counted ? "Counted as 1 autofill this month." : "Same application as before: not counted again."}`;
+    const list = $("askList"); clear(list);
+    fill.asks.slice(0, 25).forEach((a) => {
+      const f = current.fields.get(a.id);
+      list.append(el("button", { class: "ask", type: "button", onclick: () => jumpTo(a.id) }, [el("b", { text: (f && f.label) || "Field" }), el("span", { text: a.reason || "Needs you" })]));
+    });
+  }
+}
 function setRing(v) {
   const ring = $("ring"); const val = Math.max(0, Math.min(100, Math.round(v)));
   ring.style.setProperty("--v", String(val));
   ring.style.setProperty("--c", val >= 75 ? "var(--ok)" : val >= 50 ? "var(--brand)" : val >= 30 ? "var(--warn)" : "var(--bad)");
   ring.setAttribute("aria-valuenow", String(val)); $("ringVal").textContent = String(val);
 }
+async function jumpTo(id) {
+  try {
+    await exec(current.tabId, { func: (fid) => { const n = document.querySelector(`[data-ap-id="${CSS.escape(fid)}"]`); if (!n) return false; n.scrollIntoView({ block: "center", behavior: "smooth" }); try { n.focus({ preventScroll: true }); } catch { /* not focusable */ } return true; }, args: [id] }, true);
+  } catch { /* field gone */ }
+}
 
+// ───────── detect (runs on page load / tab switch; no Detect button)
 let detecting = false;
 async function detect() {
   if (detecting) return; detecting = true;
-  $("jobBody").hidden = true; $("fitOut").hidden = true; $("coverOut").hidden = true; say("jobMsg", "");
-  $("jobSource").textContent = "Looking for a job on this page…";
+  $("fitOut").hidden = true; $("coverOut").hidden = true;
   try {
     const tab = await activeTab();
+    if (tab.id !== current.tabId) { fill = null; current.saved = false; }
     await loadTabState(tab.id);
     const [res] = await exec(tab.id, { files: ["detect.js"] });
     const job = res && res.result;
     const base = pageBaseOf(job && job.url || "");
-    if (current.pageBase && base !== current.pageBase) { current.jobId = null; current.applicationId = null; }
+    if (current.pageBase && base !== current.pageBase) { current.jobId = null; current.applicationId = null; fill = null; current.saved = false; }
     current.pageBase = base; await saveTabState();
-    if (!job || !job.found) {
-      current.job = null;
-      $("jobSource").textContent = job && job.hasForm ? "No job posting found, but this page has a form. Try the Autofill tab." : "No job posting detected on this page.";
-      return;
+    current.job = job && job.found ? job : null;
+    // detect.js's hasForm is true for any form (site search bars too). Count application-like fields before offering Fill.
+    let appForm = false;
+    if (job && job.hasForm) {
+      try {
+        const [f] = await exec(tab.id, { func: () => {
+          const els = [...document.querySelectorAll("form input, form textarea, form select")].filter((n) => {
+            if (/^(hidden|search|submit|button|image|reset)$/i.test(n.type || "")) return false;
+            if (n.closest("header, nav, [role=search], form[role=search], form[action*=search i]")) return false;
+            const r = n.getBoundingClientRect(); return r.width > 0 || n.type === "file";
+          });
+          return els.length >= 3 || els.some((n) => n.type === "file" || n.tagName === "TEXTAREA");
+        } });
+        appForm = !!(f && f.result);
+      } catch { appForm = false; }
     }
-    current.job = job;
-    $("jobSource").textContent = `Detected via ${job.source === "json-ld" ? "structured job data" : job.source}${job.confidence === "low" ? " (best guess)" : ""}`;
-    $("jobTitle").textContent = job.title;
-    $("jobCompany").textContent = [job.company, job.location, job.remote ? "Remote" : ""].filter(Boolean).join(" · ");
-    $("jobBody").hidden = false;
-    setRing(0); $("ringVal").textContent = "…"; clear($("chips")); $("scoreNote").textContent = "";
-    if (!settings.key) { $("scoreNote").textContent = "Connect your account in Settings to see your fit score."; return; }
-    if ((job.description || "").length < 40) { $("ringVal").textContent = "–"; $("scoreNote").textContent = "Not enough description text to score."; return; }
-    try {
-      const s = await apiCall("/api/score", { body: { title: job.title, description: job.description } });
-      setRing(s.score);
-      $("scoreNote").textContent = `ATS keyword match: ${s.matched.length} of ${s.total} job keywords are in your profile.`;
-      const chips = $("chips"); clear(chips);
-      s.matched.slice(0, 8).forEach((k) => chips.append(el("span", { class: "chip ok", text: k })));
-      s.missing.slice(0, 8).forEach((k) => chips.append(el("span", { class: "chip miss", text: k })));
-    } catch (e) { $("ringVal").textContent = "–"; $("scoreNote").textContent = e.message; }
+    page = { status: appForm ? "form" : current.job ? "job" : "none", job: current.job, hasForm: appForm };
+    render();
+    if (current.job) scoreJob(current.job);
   } catch (e) {
-    $("jobSource").textContent = e.message === NEED_ACCESS ? accessHelp : `Could not read this page: ${e.message}`;
+    page = { status: e.message === NEED_ACCESS ? "access" : "none", job: null, hasForm: false }; current.job = null; render();
   } finally { detecting = false; }
+  consumeFabAction();
 }
-$("detectBtn").addEventListener("click", detect);
+async function scoreJob(job) {
+  $("jobTitle").textContent = job.title;
+  $("jobCompany").textContent = [job.company, job.location, job.remote ? "Remote" : ""].filter(Boolean).join(" · ");
+  setRing(0); $("ringVal").textContent = "…"; $("scoreNote").textContent = "";
+  if (!signedIn()) return;
+  if ((job.description || "").length < 40) { $("ringVal").textContent = "–"; $("scoreNote").textContent = "Not enough description text to score."; return; }
+  try {
+    const s = await apiCall("/api/score", { body: { title: job.title, description: job.description } });
+    setRing(s.score);
+    const miss = (s.missing || []).slice(0, 3);
+    $("scoreNote").textContent = `${s.matched.length}/${s.total} keywords${miss.length ? ` · missing: ${miss.join(", ")}` : ""}`;
+  } catch (e) { $("ringVal").textContent = "–"; $("scoreNote").textContent = e.message; }
+}
 
+// ───────── actions
 async function ensureJob(track = false) {
   if (!current.job) throw new Error("No job detected on this page.");
   if (current.jobId && !track) return current.jobId;
@@ -185,325 +328,213 @@ async function ensureJob(track = false) {
   await saveTabState();
   return current.jobId;
 }
-$("saveJob").addEventListener("click", async (e) => {
-  busy(e.currentTarget, true, "Saving…");
-  try { await ensureJob(true); say("jobMsg", "Saved to your tracker ✓", "ok"); } catch (err) { say("jobMsg", err.message, "bad"); }
-  busy($("saveJob"), false);
-});
-$("tailorJob").addEventListener("click", async (e) => {
-  busy(e.currentTarget, true, "Opening…");
-  try { const id = await ensureJob(); chrome.tabs.create({ url: `${settings.api}/dashboard/tailor?job=${encodeURIComponent(id)}` }); } catch (err) { say("jobMsg", err.message, "bad"); }
-  busy($("tailorJob"), false);
-});
-$("coverJob").addEventListener("click", async (e) => {
-  busy(e.currentTarget, true, "Writing…");
-  try {
-    const id = await ensureJob();
-    const r = await apiCall("/api/cover-letter", { body: { jobId: id } });
-    $("coverText").value = r.cover_letter; updateWords(); $("coverOut").hidden = false;
-    say("jobMsg", "Cover letter ready. Edit it, then copy.", "ok");
-  } catch (err) { say("jobMsg", err.message, "bad"); }
-  busy($("coverJob"), false);
-});
-function updateWords() { const n = ($("coverText").value.trim().match(/\S+/g) || []).length; $("coverWords").textContent = `${n} words`; }
-$("coverText").addEventListener("input", updateWords);
-$("copyCover").addEventListener("click", async () => {
-  try { await navigator.clipboard.writeText($("coverText").value); say("jobMsg", "Copied ✓", "ok"); } catch { say("jobMsg", "Copy failed. Select the text and copy.", "bad"); }
-});
-$("fitJob").addEventListener("click", async (e) => {
-  busy(e.currentTarget, true, "Analysing…");
-  try {
-    const id = await ensureJob();
-    const m = await apiCall("/api/match", { body: { jobId: id } });
-    const out = $("fitOut"); clear(out); out.className = "fit"; out.hidden = false;
-    out.append(el("div", { class: "divider" }), el("h3", { text: `AI fit: ${m.fit_score}/100` }), el("p", { class: "small", text: m.verdict || "" }));
-    if (m.reasons && m.reasons.length) out.append(el("ul", {}, m.reasons.map((r) => el("li", { text: r }))));
-    if (m.gaps && m.gaps.length) out.append(el("p", { class: "small muted", text: "Gaps:" }), el("ul", {}, m.gaps.map((r) => el("li", { text: r }))));
-  } catch (err) { say("jobMsg", err.message, "bad"); }
-  busy($("fitJob"), false);
-});
+async function withBusy(btn, label, fn) {
+  const kids = [...btn.childNodes]; btn.textContent = label; btn.disabled = true;
+  try { await fn(); } catch (e) { say(e.message === NEED_ACCESS ? "ApplyPilot can't read this tab. Use Allow access." : e.message, "bad"); }
+  if (btn === $("primary")) render(); else { btn.replaceChildren(...kids); btn.disabled = false; }
+}
+function saveJob(btn = $("primary")) {
+  return withBusy(btn, "Saving…", async () => { await ensureJob(true); current.saved = true; say("Saved to your tracker", "ok"); render(); });
+}
+$("saveJobSecondary").addEventListener("click", (e) => saveJob(e.currentTarget));
 
-// ───────── Autofill tab
-$("fillBtn").addEventListener("click", async (e) => {
-  const btn = e.currentTarget; busy(btn, true, "Reading the form…"); say("fillMsg", ""); $("fillOut").hidden = true;
-  try {
+function doFill() {
+  const btn = $("primary");
+  return withBusy(btn, "Reading the form…", async () => {
+    say("");
     const tab = await activeTab(); await loadTabState(tab.id);
     await exec(tab.id, { files: ["autofill.js"] }, true);
     const frames = await exec(tab.id, { func: () => (window.__AP ? window.__AP.collect() : null) }, true);
     const fields = []; let url = "", title = "";
     for (const f of frames) { const r = f.result; if (!r) continue; fields.push(...r.fields); if (r.top || !url) { url = r.url; title = r.title; } }
-    if (!fields.length) throw new Error("No form fields found on this page. Open the application form first.");
+    if (!fields.length) throw new Error("No form fields found. Open the application form first.");
     const base = pageBaseOf(url);
     if (current.pageBase && base !== current.pageBase) { current.applicationId = null; current.jobId = null; }
     current.pageBase = base;
     current.fields = new Map(fields.map((f) => [f.id, f]));
-
     btn.textContent = "Filling…";
     const res = await apiCall("/api/agent", { body: { url, pageTitle: title, fields: fields.slice(0, 150), jobId: current.jobId, applicationId: current.applicationId } });
     current.applicationId = res.applicationId || current.applicationId; await saveTabState();
-
     const results = await exec(tab.id, { func: (actions) => (window.__AP ? window.__AP.apply(actions) : { filled: 0, asks: [] }), args: [res.actions || []] }, true);
     let filled = 0; const asks = []; let submitFound = false;
     for (const r of results) { if (!r.result) continue; filled += r.result.filled; asks.push(...r.result.asks); submitFound = submitFound || r.result.submitFound; }
     current.asks = asks;
-    renderFill(filled, asks, submitFound, res);
-  } catch (err) {
-    say("fillMsg", err.message === NEED_ACCESS ? accessHelp : err.message, "bad");
-  }
-  busy(btn, false);
-});
-
-function renderFill(filled, asks, submitFound, res) {
-  $("fillOut").hidden = false;
-  $("fillSummary").textContent = `${res.company || res.title ? `${[res.title, res.company].filter(Boolean).join(" at ")}: ` : ""}filled ${filled} field${filled === 1 ? "" : "s"}, ${asks.length} need you. ${submitFound ? "Check everything, then click the blue-outlined button yourself." : "Check everything before you submit."}`;
-  const list = $("askList"); clear(list);
-  asks.slice(0, 25).forEach((a) => {
-    const f = current.fields.get(a.id);
-    list.append(el("div", { class: "ask" }, [el("b", { text: (f && f.label) || "Field" }), el("span", { class: "muted", text: a.reason || "Needs you" })]));
+    fill = { filled, asks, submitFound, res };
   });
-  $("saveAnswers").hidden = !asks.some((a) => { const f = current.fields.get(a.id); return f && f.type !== "file"; });
-  say("fillMsg", res.counted ? "Counted as 1 autofill this month." : "Same application as before: not counted again.", "");
 }
 
-$("saveAnswers").addEventListener("click", async (e) => {
-  busy(e.currentTarget, true, "Saving…");
+// Answers the user typed into the orange fields are saved on their own when they mark the application submitted.
+async function autoSaveAnswers() {
+  const ids = current.asks.filter((a) => { const f = current.fields.get(a.id); return f && f.type !== "file"; }).map((a) => a.id);
+  if (!ids.length || current.tabId == null) return 0;
   try {
-    const tab = await activeTab();
-    const ids = current.asks.map((a) => a.id);
-    const frames = await exec(tab.id, { func: (list) => (window.__AP ? window.__AP.readAnswers(list) : []), args: [ids] }, true);
+    const frames = await exec(current.tabId, { func: (list) => (window.__AP ? window.__AP.readAnswers(list) : []), args: [ids] }, true);
     const answers = frames.flatMap((f) => f.result || []).filter((x) => x && x.q && x.a);
-    if (!answers.length) throw new Error("Answer the orange fields on the page first, then click Save my answers.");
+    if (!answers.length) return 0;
     const r = await apiCall("/api/answers", { body: { answers } });
-    say("fillMsg", `Saved ${r.saved} answer${r.saved === 1 ? "" : "s"} to your answer bank ✓${r.skipped ? ` (${r.skipped} salary/ID answers are never stored)` : ""}`, "ok");
-    loadAnswers(true);
-  } catch (err) { say("fillMsg", err.message === NEED_ACCESS ? accessHelp : err.message, "bad"); }
-  busy($("saveAnswers"), false);
-});
-
-$("markApplied").addEventListener("click", async (e) => {
-  if (!current.applicationId) return say("fillMsg", "Fill the form first so there is an application to track.", "bad");
-  busy(e.currentTarget, true, "Updating…");
-  try {
+    return r.saved || 0;
+  } catch { return 0; }
+}
+function markSubmitted() {
+  return withBusy($("primary"), "Updating…", async () => {
+    const saved = await autoSaveAnswers();
     await apiCall("/api/applications", { body: { id: current.applicationId, status: "applied" } });
-    say("fillMsg", "Tracked as applied ✓ Good luck!", "ok");
-    current.applicationId = null; current.jobId = null; await saveTabState();
-  } catch (err) { say("fillMsg", err.message, "bad"); }
-  busy($("markApplied"), false);
+    current.applicationId = null; current.jobId = null; fill = null; await saveTabState();
+    say(`Tracked as applied.${saved ? ` Saved ${saved} new answer${saved === 1 ? "" : "s"} to your answer bank (edit them on the website).` : ""} Good luck!`, "ok");
+    render();
+  });
+}
+
+// AI tools menu: Tailor opens the website; Cover letter and Fit show inline.
+const aiMenu = $("aiMenu");
+function toggleMenu(open) { aiMenu.hidden = !open; $("aiBtn").setAttribute("aria-expanded", String(open)); if (open) aiMenu.querySelector("button").focus(); }
+$("aiBtn").addEventListener("click", () => toggleMenu(aiMenu.hidden));
+document.addEventListener("click", (e) => { if (!aiMenu.hidden && !e.target.closest(".menu-wrap")) toggleMenu(false); });
+aiMenu.addEventListener("keydown", (e) => {
+  const items = [...aiMenu.querySelectorAll("button")]; const i = items.indexOf(document.activeElement);
+  if (e.key === "Escape") { toggleMenu(false); $("aiBtn").focus(); }
+  if (e.key === "ArrowDown" || e.key === "ArrowUp") { e.preventDefault(); items[(i + (e.key === "ArrowDown" ? 1 : items.length - 1)) % items.length].focus(); }
+});
+aiMenu.addEventListener("click", (e) => {
+  const b = e.target.closest("button[data-ai]"); if (!b) return;
+  toggleMenu(false); const btn = $("aiBtn");
+  if (b.dataset.ai === "tailor") return withBusy(btn, "Opening…", async () => { const id = await ensureJob(); openWeb(`/dashboard/tailor?job=${encodeURIComponent(id)}`); });
+  if (b.dataset.ai === "cover") return withBusy(btn, "Writing…", async () => {
+    const id = await ensureJob(); const r = await apiCall("/api/cover-letter", { body: { jobId: id } });
+    $("coverText").value = r.cover_letter; updateWords(); $("coverOut").hidden = false; $("fitOut").hidden = true;
+  });
+  if (b.dataset.ai === "fit") return withBusy(btn, "Analysing…", async () => {
+    const id = await ensureJob(); const m = await apiCall("/api/match", { body: { jobId: id } });
+    const out = $("fitOut"); clear(out); out.hidden = false; $("coverOut").hidden = true;
+    out.append(el("h3", { text: `AI fit: ${m.fit_score}/100` }), el("p", { class: "small", text: m.verdict || "" }));
+    if (m.reasons && m.reasons.length) out.append(el("ul", { class: "small" }, m.reasons.map((r) => el("li", { text: r }))));
+    if (m.gaps && m.gaps.length) out.append(el("p", { class: "small muted", text: "Gaps:" }), el("ul", { class: "small" }, m.gaps.map((r) => el("li", { text: r }))));
+  });
+});
+function updateWords() { const n = ($("coverText").value.trim().match(/\S+/g) || []).length; $("coverWords").textContent = `${n} words`; }
+$("coverText").addEventListener("input", updateWords);
+$("copyCover").addEventListener("click", async (e) => {
+  e.preventDefault();
+  try { await navigator.clipboard.writeText($("coverText").value); say("Copied", "ok"); } catch { say("Copy failed. Select the text and copy.", "bad"); }
 });
 
-// ───────── Answers tab
-const ANSWER_LABELS = {
-  work_authorization_india: "Work authorisation", notice_period: "Notice period", willing_to_relocate: "Willing to relocate",
-  available_from: "Available from", preferred_locations: "Preferred locations", graduation_year: "Graduation year", languages: "Languages",
-  expected_ctc: "Expected CTC", current_ctc: "Current CTC"
-};
-let answerItems = null;
-async function loadAnswers(force = false) {
-  if (answerItems && !force) return renderAnswers();
-  if (!settings.key) { const l = $("answerList"); clear(l); l.append(el("p", { class: "empty", text: "Connect your account in Settings to see your saved answers." })); return; }
-  try {
-    const { profile: p } = await apiCall("/api/profile", { method: "GET" });
-    const items = [];
-    const add = (q, a) => { if (a && String(a).trim()) items.push({ q, a: String(a) }); };
-    add("Full name", p.full_name); add("Email", p.email); add("Phone", p.phone); add("Location", p.location);
-    add("LinkedIn", p.linkedin); add("GitHub", p.github); add("Portfolio", p.portfolio); add("Headline", p.headline); add("Summary", p.summary);
-    const edu = (p.education || [])[0]; if (edu) { add("Degree", [edu.degree, edu.field].filter(Boolean).join(", ")); add("College", edu.institution); add("CGPA / %", edu.grade); }
-    add("Skills", (p.skills || []).join(", "));
-    for (const [k, label] of Object.entries(ANSWER_LABELS)) add(label, p.answers && p.answers[k]);
-    for (const x of p.answer_bank || []) add(x.q, x.a);
-    answerItems = items; renderAnswers();
-  } catch (e) { say("answersMsg", e.message, "bad"); }
-}
-function renderAnswers() {
-  const list = $("answerList"); clear(list);
-  const term = $("answerSearch").value.trim().toLowerCase();
-  const items = (answerItems || []).filter((x) => !term || x.q.toLowerCase().includes(term) || x.a.toLowerCase().includes(term));
-  if (!items.length) { list.append(el("p", { class: "empty", text: answerItems && answerItems.length ? "No matches." : "No saved answers yet. Add them in Dashboard → Profile." })); return; }
-  for (const x of items) {
-    const b = el("button", { class: "answer", type: "button", title: "Click to copy" }, [el("span", { class: "q", text: x.q }), el("span", { class: "a", text: x.a })]);
-    b.addEventListener("click", async () => {
-      try { await navigator.clipboard.writeText(x.a); b.classList.add("copied"); say("answersMsg", `Copied “${x.q}” ✓`, "ok"); setTimeout(() => b.classList.remove("copied"), 1200); }
-      catch { say("answersMsg", "Copy failed.", "bad"); }
-    });
-    list.append(b);
-  }
-}
-$("answerSearch").addEventListener("input", renderAnswers);
-$("reloadAnswers").addEventListener("click", () => loadAnswers(true));
-
-// ───────── Auto tab (the run itself lives in background.js; this only shows state and sends start/stop)
-const ALL_SITES = ["https://*/*", "http://*/*"];
-async function renderAccess() {
-  const all = await chrome.permissions.contains({ origins: ALL_SITES });
-  const boards = all || await chrome.permissions.contains({ origins: JOB_SITES });
-  $("autoAccess").hidden = all;
-  $("autoAccessOk").hidden = !boards;
-  $("autoAccessOk").textContent = all ? "Site access: all sites ✓" : boards ? "Site access: job boards only. Jobs on other employer sites will be skipped." : "";
-  return boards;
-}
+// ───────── access (ONE prompt; must start synchronously inside the click = user gesture)
 function requestAccess(origins) {
-  chrome.permissions.request({ origins }).then((ok) => { say("autoMsg", ok ? "Access granted ✓" : "Not allowed.", ok ? "ok" : "bad"); renderAccess(); })
-    .catch((e) => say("autoMsg", String(e.message || e), "bad"));
+  chrome.permissions.request({ origins }).then((ok) => { say(ok ? "Access allowed. ApplyPilot still only acts when you click or when Auto is on." : "Not allowed.", ok ? "ok" : "bad"); refreshAccess().then(detect); })
+    .catch((e) => say(String(e.message || e), "bad"));
 }
-// Permission requests must start synchronously in the click handler (user gesture).
-$("autoAllowAll").addEventListener("click", () => requestAccess(ALL_SITES));
-$("autoAllowBoards").addEventListener("click", () => requestAccess(JOB_SITES));
+async function refreshAccess() {
+  const all = await chrome.permissions.contains({ origins: ALL_SITES });
+  st.access = { all, boards: all || await chrome.permissions.contains({ origins: JOB_SITES.filter((o) => !/linkedin/.test(o)) }) };
+}
+function renderAccessLine() {
+  const n = $("accessLine"); clear(n);
+  n.append(st.access.all ? "Site access: all sites." : st.access.boards ? "Site access: job boards only. " : "Site access: not allowed yet. ");
+  if (!st.access.all) n.append(el("a", { href: "#", text: "Allow on all sites", onclick: (e) => { e.preventDefault(); requestAccess(ALL_SITES); } }));
+}
 
-const istDayUI = () => new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Kolkata", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
-const STATUS_TEXT = { idle: "Idle", running: "Running", waiting: "Waiting before the next job", discovering: "Finding matching jobs", stopped: "Stopped" };
-async function renderAuto() {
-  const d = await chrome.storage.local.get(["autoEnabled", "autoCap", "autoState", "autoLog", "autoDaily", "autoDiscover", "autoKeywords", "autoLocation", "autoRemote", "autoMinScore"]);
-  const st = d.autoState || {}; const cap = Number(d.autoCap) || 20;
-  const today = d.autoDaily && d.autoDaily.day === istDayUI() ? d.autoDaily.count : 0;
-  $("autoEnabled").checked = !!d.autoEnabled; $("autoEnabledLabel").textContent = d.autoEnabled ? "On" : "Off";
-  if (document.activeElement !== $("autoCap")) $("autoCap").value = String(cap);
-  $("autoStart").disabled = !d.autoEnabled || !!st.running; $("autoStop").disabled = !st.running;
-  let status = STATUS_TEXT[st.status] || "Idle";
-  if (st.status === "waiting" && st.nextAt) status += ` (${Math.max(0, Math.round((st.nextAt - Date.now()) / 1000))}s)`;
-  $("autoStatus").textContent = st.message && !st.running ? `${status}: ${st.message}` : status;
-  const cur = st.current && st.current.app;
-  $("autoCurrent").textContent = cur ? `Now: ${[cur.company, cur.title].filter(Boolean).join(" · ") || cur.url}${st.current.step === "submitting" ? " (submitting…)" : ""}` : "";
-  $("autoToday").textContent = `${today}/${cap}`;
-  $("autoFoundToday").textContent = String(d.autoDaily && d.autoDaily.day === istDayUI() ? d.autoDaily.discovered || 0 : 0);
-  // Discovery settings ("Find jobs automatically" is on unless the user turned it off).
-  const disc = d.autoDiscover !== false;
-  $("autoDiscover").checked = disc; $("autoDiscoverLabel").textContent = disc ? "On" : "Off";
-  $("autoDiscoverFields").setAttribute("aria-disabled", String(!disc));
-  for (const [id, key] of [["autoKeywords", "autoKeywords"], ["autoLocation", "autoLocation"]]) if (document.activeElement !== $(id)) $(id).value = d[key] || "";
-  $("autoRemote").checked = d.autoRemote !== false;
-  if (document.activeElement !== $("autoMinScore")) $("autoMinScore").value = String(Number.isFinite(Number(d.autoMinScore)) && d.autoMinScore !== undefined ? d.autoMinScore : 30);
-  $("autoSubmitted").textContent = String(st.submitted || 0); $("autoSkipped").textContent = String(st.skipped || 0);
-  $("autoLeft").textContent = String((st.queue || []).length);
-  const ol = $("autoLog"); clear(ol);
-  const items = d.autoLog || [];
-  if (!items.length) ol.append(el("li", { class: "empty" }, [el("span", { text: "" }), el("span", { class: "muted", text: "Nothing yet." })]));
-  for (const x of items.slice(0, 100)) {
-    const t = new Date(x.t).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false });
-    ol.append(el("li", {}, [el("time", { text: t }), el("span", { class: x.kind || "", text: x.text || "" })]));
-  }
-  renderAccess();
-}
+// ───────── Auto (runners live in the service worker)
 $("autoEnabled").addEventListener("change", async (e) => {
   const on = e.currentTarget.checked;
-  if (on && !(await renderAccess())) say("autoMsg", "Allow site access below before you start.", "bad"); else say("autoMsg", "");
+  if (on) {
+    e.currentTarget.checked = false;
+    const { autoConfirmed } = await chrome.storage.local.get("autoConfirmed");
+    if (!autoConfirmed) { pendingRun = false; $("autoSheet").showModal(); return; }
+  }
   await chrome.storage.local.set({ autoEnabled: on });
 });
-$("autoCap").addEventListener("change", async (e) => {
-  const n = Math.floor(Number(e.currentTarget.value));
-  if (!Number.isFinite(n) || n < 1 || n > 200) { say("autoMsg", "Cap must be between 1 and 200.", "bad"); return renderAuto(); }
-  await chrome.storage.local.set({ autoCap: n }); say("autoMsg", `Daily cap set to ${n}.`, "ok");
+let pendingRun = false;
+$("autoCancel").addEventListener("click", () => { pendingRun = false; $("autoSheet").close(); });
+$("autoConfirm").addEventListener("click", async () => {
+  $("autoSheet").close(); await chrome.storage.local.set({ autoEnabled: true, autoConfirmed: true });
+  if (pendingRun) { pendingRun = false; startRun("board"); }
 });
-$("autoDiscover").addEventListener("change", async (e) => {
-  const on = e.currentTarget.checked;
-  await chrome.storage.local.set({ autoDiscover: on });
-  say("autoMsg", on ? "Auto mode will find matching jobs when the queue is empty." : "Auto mode will only use jobs you saved yourself.", "ok");
-});
-$("autoKeywords").addEventListener("change", async (e) => { await chrome.storage.local.set({ autoKeywords: e.currentTarget.value.trim().slice(0, 300) }); say("autoMsg", "Keywords saved.", "ok"); });
-$("autoLocation").addEventListener("change", async (e) => { await chrome.storage.local.set({ autoLocation: e.currentTarget.value.trim().slice(0, 200) }); say("autoMsg", "Location saved.", "ok"); });
-$("autoRemote").addEventListener("change", async (e) => { await chrome.storage.local.set({ autoRemote: e.currentTarget.checked }); });
-$("autoMinScore").addEventListener("change", async (e) => {
-  const n = Math.round(Number(e.currentTarget.value));
-  if (!Number.isFinite(n) || n < 0 || n > 100) { say("autoMsg", "Min fit score must be between 0 and 100.", "bad"); return renderAuto(); }
-  await chrome.storage.local.set({ autoMinScore: n }); say("autoMsg", `Min fit score set to ${n}%.`, "ok");
-});
-$("autoStart").addEventListener("click", async (e) => {
-  if (!(await renderAccess())) return say("autoMsg", "Allow site access first (all sites recommended).", "bad");
-  busy(e.currentTarget, true, "Starting…");
-  try {
-    const r = await chrome.runtime.sendMessage({ type: "auto:start" });
-    if (!r || !r.ok) say("autoMsg", (r && r.error) || "Could not start.", "bad"); else say("autoMsg", "Started. You can keep browsing; jobs open in a background tab.", "ok");
-  } catch (err) { say("autoMsg", String(err.message || err), "bad"); }
-  busy($("autoStart"), false); renderAuto();
-});
-$("autoStop").addEventListener("click", async () => {
-  try { await chrome.runtime.sendMessage({ type: "auto:stop" }); say("autoMsg", "Stopped.", ""); } catch (err) { say("autoMsg", String(err.message || err), "bad"); }
-  renderAuto();
-});
-$("autoClearLog").addEventListener("click", async () => { await chrome.storage.local.set({ autoLog: [] }); renderAuto(); });
-chrome.storage.onChanged.addListener((c, area) => {
-  if (area === "local" && (c.autoState || c.autoLog || c.autoDaily || c.autoEnabled || c.autoCap || c.autoDiscover || c.autoRemote) && !$("panel-auto").hidden) renderAuto();
-});
-setInterval(() => { if (!$("panel-auto").hidden) renderAuto(); }, 5000); // keeps the "next job in Ns" countdown fresh
-
-// ───────── Board Auto-Apply (v2.4: settings live on the website and are shown read-only; runner in boardrunner.js).
-const BOARD_UI = [["naukri", "Naukri", 25, true], ["internshala", "Internshala", 25, true], ["indeed", "Indeed India", 15, true], ["foundit", "Foundit", 15, false]];
-const BOARD_STATUS = { idle: "Idle", starting: "Starting", collecting: "Collecting recommended jobs", running: "Applying", waiting: "Waiting before the next job", stopped: "Stopped" };
-async function getBoardSettingsUI() {
-  const srv = ((await chrome.storage.local.get("serverAuto")).serverAuto || {}).settings;
-  const saved = (srv && srv.boards) || (await chrome.storage.local.get("boardSettings")).boardSettings || {};
-  const out = {};
-  for (const [id, , cap, on] of BOARD_UI) { const s = saved[id] || {}; const c = Number(s.cap); out[id] = { on: typeof s.on === "boolean" ? s.on : on, cap: Number.isFinite(c) && c >= 1 ? Math.min(100, Math.floor(c)) : cap }; }
-  return out;
+async function runNow() {
+  if (!st.autoEnabled) {
+    const { autoConfirmed } = await chrome.storage.local.get("autoConfirmed");
+    if (!autoConfirmed) { pendingRun = true; $("autoSheet").showModal(); return; }
+    await chrome.storage.local.set({ autoEnabled: true });
+  }
+  startRun("board");
 }
-function buildBoardList() {
-  const box = $("boardList"); clear(box);
-  for (const [id, name] of BOARD_UI) {
-    box.append(el("div", { class: "row between" }, [
-      el("span", { id: `board-${id}-on`, text: name }),
-      el("span", { class: "small", id: `board-${id}-conn`, text: "" }),
-      el("span", { class: "small muted", id: `board-${id}-today`, text: "0 today" })
-    ]));
+// "Run now" runs the board recommendations runner when any board is on, otherwise the saved-jobs queue (+ discovery).
+async function startRun(kind) {
+  const btn = $("primary");
+  await withBusy(btn, "Starting…", async () => {
+    const useBoards = kind === "board" && boardConn().some((b) => b.on);
+    if (!useBoards) { await refreshAccess(); if (!st.access.boards) throw new Error("Allow site access first (all sites recommended)."); }
+    const r = await chrome.runtime.sendMessage({ type: useBoards ? "board:start" : "auto:start" });
+    if (!r || !r.ok) throw new Error((r && r.error) || "Could not start.");
+    say("Started. Jobs open in a background tab; keep Chrome open.", "ok");
+  });
+  refreshAuto();
+}
+$("runSaved").addEventListener("click", async (e) => {
+  e.preventDefault();
+  if (!signedIn()) return say("Sign in first.", "bad");
+  if (!st.autoEnabled) { say("Turn Auto on first (switch at the top).", "bad"); return; }
+  if (running()) return say("A run is already going.", "bad");
+  startRun("saved");
+});
+async function stopAll() {
+  try { await chrome.runtime.sendMessage({ type: "auto:stop" }); say("Stopped."); } catch (err) { say(String(err.message || err), "bad"); }
+  refreshAuto();
+}
+
+// ───────── board chips + recent
+function renderChips(boards) {
+  const box = $("boardChips"); clear(box);
+  for (const b of boards) {
+    const cls = !b.on ? "off" : b.connected === true ? "ok" : b.connected === false ? "warn" : "";
+    const title = !b.on ? `${b.name}: off (turn it on in Auto-apply settings)` : b.connected === true ? `${b.name}: signed in` : b.connected === false ? `${b.name}: needs sign-in. Click to open the login page.` : `${b.name}: sign-in not checked yet`;
+    box.append(el("button", { class: `chip ${cls}`, type: "button", title, "aria-label": title, onclick: () => {
+      if (!b.on) return openWeb("/dashboard/auto");
+      chrome.tabs.create({ url: b.login });
+    } }, [el("span", { class: "d" }), b.name]));
   }
 }
-async function renderBoards() {
-  const d = await chrome.storage.local.get(["autoEnabled", "boardState", "autoDaily", "serverAuto", "boardLastAutoDay"]);
-  const st = d.boardState || {}; const set = await getBoardSettingsUI();
-  const srv = d.serverAuto || {}; const cfg = srv.settings || null; const conn = srv.board_status || {};
-  const daily = d.autoDaily && d.autoDaily.day === istDayUI() ? d.autoDaily : { count: 0, boards: {} };
-  let total = 0;
-  for (const [id, name] of BOARD_UI) {
-    const n = (daily.boards || {})[id] || 0; total += n;
-    $(`board-${id}-on`).textContent = `${set[id].on ? "✓" : "✗"} ${name}`;
-    const c = conn[id];
-    $(`board-${id}-conn`).textContent = !c || c.connected == null ? "sign-in not checked" : c.connected ? "signed in ✓" : "not signed in";
-    $(`board-${id}-today`).textContent = set[id].on ? `${n}/${set[id].cap} today` : "off";
+function renderRecent() {
+  const ol = $("recent"); clear(ol);
+  const items = (st.autoLog || []).slice(0, 5);
+  if (!items.length) { ol.append(el("li", { class: "empty", text: "No activity yet." })); return; }
+  for (const x of items) {
+    const t = new Date(x.t).toLocaleTimeString("en-IN", { hour: "2-digit", minute: "2-digit", hour12: false });
+    ol.append(el("li", { title: x.text || "" }, [el("time", { text: t }), el("span", { class: x.kind || "", text: x.text || "" })]));
   }
-  $("boardSchedule").textContent = !cfg ? "Settings not loaded yet (connect your account in Settings)."
-    : `${cfg.enabled ? `Runs daily at ${cfg.run_time} IST while Chrome is open${d.boardLastAutoDay === istDayUI() ? " (today's run done)" : ""}` : "Daily run is off"} · daily cap ${cfg.daily_cap} · min match ${cfg.min_match ? cfg.min_match + "%" : "off"}${d.autoEnabled ? "" : " · turn Auto mode on above"}`;
-  $("boardToday").textContent = String(total);
-  $("boardStart").disabled = !d.autoEnabled || !!st.running; $("boardStop").disabled = !st.running;
-  const name = (BOARD_UI.find((b) => b[0] === st.board) || [])[1];
-  let line = BOARD_STATUS[st.status] || st.status || "Idle";
-  if (st.running && name) line += ` · ${name}`;
-  if (st.status === "waiting" && st.nextAt) line = `Waiting · next in ${Math.max(0, Math.round((st.nextAt - Date.now()) / 1000))}s`;
-  if (st.current) line += ` · ${[st.current.company, st.current.title].filter(Boolean).join(" · ") || st.current.url}${st.current.step === "submitting" ? " (submitting…)" : ""}`;
-  if (st.message && !st.running) line += `: ${st.message}`;
-  if (st.startedAt) line += ` · applied ${st.applied || 0}, review ${st.review || 0}, skipped ${st.skipped || 0}${st.lowMatch ? ` (${st.lowMatch} below min match)` : ""}`;
-  $("boardStatus").textContent = line;
 }
-$("boardEdit").addEventListener("click", (e) => { e.preventDefault(); if (settings.api) chrome.tabs.create({ url: `${settings.api}/dashboard/auto` }); else say("boardMsg", "Add the API URL in Settings first.", "bad"); });
-$("boardCheck").addEventListener("click", async (e) => {
-  busy(e.currentTarget, true, "Checking…");
-  try {
-    const r = await chrome.runtime.sendMessage({ type: "board:check" });
-    say("boardMsg", r && r.ok ? "Sign-in status updated (Indeed is checked when a run starts)." : (r && r.error) || "Check failed.", r && r.ok ? "ok" : "bad");
-  } catch (err) { say("boardMsg", String(err.message || err), "bad"); }
-  busy($("boardCheck"), false); renderBoards();
-});
-// Pull the latest website settings whenever the Auto tab is shown.
-const refreshServerAuto = () => chrome.runtime.sendMessage({ type: "board:settings" }).then(() => renderBoards()).catch(() => {});
-buildBoardList();
-$("boardStart").addEventListener("click", async (e) => {
-  busy(e.currentTarget, true, "Starting…");
-  try {
-    const r = await chrome.runtime.sendMessage({ type: "board:start" });
-    if (!r || !r.ok) say("boardMsg", (r && r.error) || "Could not start.", "bad"); else say("boardMsg", "Started. Jobs open in a background tab; stay signed in to the boards.", "ok");
-  } catch (err) { say("boardMsg", String(err.message || err), "bad"); }
-  busy($("boardStart"), false); renderBoards();
-});
-$("boardStop").addEventListener("click", async () => {
-  try { await chrome.runtime.sendMessage({ type: "board:stop" }); say("boardMsg", "Stopped.", ""); } catch (err) { say("boardMsg", String(err.message || err), "bad"); }
-  renderBoards();
-});
-chrome.storage.onChanged.addListener((c, area) => {
-  if (area === "local" && (c.boardState || c.boardSettings || c.serverAuto || c.boardLastAutoDay || c.autoDaily || c.autoEnabled) && !$("panel-auto").hidden) renderBoards();
-});
-setInterval(() => { if (!$("panel-auto").hidden) renderBoards(); }, 2000);
 
-// ───────── follow the active tab
+async function refreshAuto() {
+  const d = await chrome.storage.local.get(["autoEnabled", "autoState", "boardState", "serverAuto", "autoDaily", "autoLog", "doneSeen"]);
+  st = { ...st, autoEnabled: !!d.autoEnabled, autoState: d.autoState || {}, boardState: d.boardState || {}, serverAuto: d.serverAuto || null, autoDaily: d.autoDaily || null, autoLog: d.autoLog || [], doneSeen: d.doneSeen || 0 };
+  render();
+}
+
+// ───────── in-page button: open panel + run the page's primary action
+async function consumeFabAction() {
+  const { fabAction } = await chrome.storage.session.get("fabAction");
+  if (!fabAction || fabAction.tabId !== current.tabId || Date.now() - fabAction.at > 15000) return;
+  await chrome.storage.session.remove("fabAction");
+  if (!signedIn()) return;
+  if (page.status === "form") doFill(); else if (page.status === "job" && !current.saved) saveJob();
+}
+chrome.storage.session.onChanged.addListener((c) => { if (c.fabAction && c.fabAction.newValue && !detecting) detect(); });
+
+// ───────── live updates
+chrome.storage.onChanged.addListener((c, area) => {
+  if (area !== "local") return;
+  if (c.key || c.api) loadSettings().then(() => { if (c.key && c.key.newValue && !c.key.oldValue) { say("Signed in", "ok"); syncResume(); chrome.runtime.sendMessage({ type: "board:settings" }).catch(() => {}); detect(); } render(); });
+  if (c.autoState || c.boardState || c.serverAuto || c.autoDaily || c.autoLog || c.autoEnabled || c.doneSeen) refreshAuto();
+  if (c.resumeName) loadSettings();
+});
+setInterval(() => { if (running()) refreshAuto(); }, 2000); // keeps the "next in Ns" countdown fresh
 let detectTimer = null;
 const scheduleDetect = () => { clearTimeout(detectTimer); detectTimer = setTimeout(detect, 400); };
 chrome.tabs.onActivated.addListener(scheduleDetect);
 chrome.tabs.onUpdated.addListener((tabId, info) => { if (info.status === "complete" && tabId === current.tabId) scheduleDetect(); });
+chrome.permissions.onAdded.addListener(() => refreshAccess().then(render));
 
-loadSettings().then(detect);
+(async () => {
+  await loadSettings(); await refreshAccess(); await refreshAuto();
+  detect();
+  if (signedIn()) { chrome.runtime.sendMessage({ type: "board:settings" }).then(refreshAuto).catch(() => {}); syncResume(); }
+})();
