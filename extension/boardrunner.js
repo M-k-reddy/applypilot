@@ -275,6 +275,26 @@ function resolveAnswer(q, profile) {
 }
 
 // ───────── one job
+const B_SENIOR = /\b(senior|sr\.?|lead|principal|staff|manager|head|architect|director|vp|avp)\b/i;
+/** Smallest "N years" the JD asks for, read only from sentences about experience. null = not stated. */
+function bMinYears(text) {
+  let min = null;
+  for (const sen of String(text || "").split(/[\n.;•]+/)) {
+    if (!/experience|exp\b|yrs|years/i.test(sen) || /company|founded|history|old|age\b|warranty|contract/i.test(sen)) continue;
+    const re = /(\d{1,2})\s*(?:\+|plus)?\s*(?:(?:-|–|to)\s*\d{1,2}\s*)?(?:years?|yrs?)/gi; let m;
+    while ((m = re.exec(sen))) { const n = Number(m[1]); if (n <= 20) min = min == null ? n : Math.min(min, n); }
+  }
+  return min;
+}
+function bJudge(info, job, profile) {
+  const exp = Number(profile.total_experience_years) || 0;
+  const title = info.title || job.title || "";
+  if (exp < 3 && B_SENIOR.test(title)) return `Title "${title}" is a senior role; you have ${exp} yr experience.`;
+  const need = bMinYears(`${info.experience || ""}\n${info.description || ""}`);
+  if (need != null && need > exp + 1) return `Asks for ${need}+ years; you have ${exp}.`;
+  return null;
+}
+
 async function bApplyJob(ctx, tabId, board, job, profile, opts) {
   await bGo(ctx, tabId, job.url, board);
   await bCheck(ctx, tabId, board, "job page");
@@ -289,6 +309,9 @@ async function bApplyJob(ctx, tabId, board, job, profile, opts) {
   }
   if (info.kind !== "onboard") return { outcome: "skip", reason: "No on-board Apply button (closed, expired or external)." };
 
+  // v2.6: agent checks. Read the job like a person would before applying: seniority, years asked, then fit vs your resume.
+  const verdict = bJudge(info, job, profile);
+  if (verdict) return { outcome: "skip", lowMatch: true, reason: verdict };
   if (opts.fitCheck && (info.description || "").length > 80) {
     try {
       const s = await api("/api/score", { body: { title: info.title || job.title, description: info.description } });
@@ -525,11 +548,12 @@ async function boardLoop() {
     const k = await api("/api/auto/board", { method: "GET" });
     const known = { urls: new Set((k.urls || []).map(urlKey)), keys: new Set(k.keys || []) };
     const srv = await fetchAutoSettings();
-    const minScore = Math.max(0, Math.min(100, Number(srv && srv.min_match) || 0));
+    const minScore = Math.max(0, Math.min(100, Number(srv && srv.min_match) || 35));
     const list = (v) => (Array.isArray(v) ? v.map(fNorm).map((x) => x.trim()).filter(Boolean).slice(0, 30) : []);
     const filt = { roles: list(srv && srv.roles), locations: list(srv && srv.locations) };
     if (filt.roles.length || filt.locations.length) await log("info", `Filters: ${filt.roles.length ? `roles ${filt.roles.join(", ")}` : "any role"}; ${filt.locations.length ? `locations ${filt.locations.join(", ")}` : "any location"}.`);
-    const fitCheck = minScore > 0; // deterministic ATS keyword score (/api/score): no AI call, no quota
+    const fitCheck = true; // v2.6: always check fit vs resume (default 35%)
+    // deterministic ATS keyword score (/api/score): no AI call, no quota
     const tabId = await bTab();
 
     for (let i = st.boardIdx; i < st.boards.length; i++) {
