@@ -21,7 +21,7 @@ export function cleanList(v: unknown): string[] {
     if (typeof x !== "string") continue;
     const t = x.replace(/[^\p{L}\p{N} .+#/&-]/gu, " ").replace(/\s+/g, " ").trim().toLowerCase().slice(0, 60);
     if (t && !out.includes(t)) out.push(t);
-    if (out.length >= 10) break;
+    if (out.length >= 30) break;
   }
   return out;
 }

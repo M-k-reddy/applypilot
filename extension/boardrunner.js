@@ -525,7 +525,7 @@ async function boardLoop() {
     const known = { urls: new Set((k.urls || []).map(urlKey)), keys: new Set(k.keys || []) };
     const srv = await fetchAutoSettings();
     const minScore = Math.max(0, Math.min(100, Number(srv && srv.min_match) || 0));
-    const list = (v) => (Array.isArray(v) ? v.map(fNorm).map((x) => x.trim()).filter(Boolean).slice(0, 10) : []);
+    const list = (v) => (Array.isArray(v) ? v.map(fNorm).map((x) => x.trim()).filter(Boolean).slice(0, 30) : []);
     const filt = { roles: list(srv && srv.roles), locations: list(srv && srv.locations) };
     if (filt.roles.length || filt.locations.length) await log("info", `Filters: ${filt.roles.length ? `roles ${filt.roles.join(", ")}` : "any role"}; ${filt.locations.length ? `locations ${filt.locations.join(", ")}` : "any location"}.`);
     const fitCheck = minScore > 0; // deterministic ATS keyword score (/api/score): no AI call, no quota
@@ -536,8 +536,11 @@ async function boardLoop() {
       const board = BCFG.BOARDS[st.boards[i]];
       await bPatch({ boardIdx: i, board: board.id, status: "collecting", message: `Opening ${board.name} recommended jobs…`, current: null });
       const settings = await boardSettings();
-      const cap = settings[board.id].cap;
       let daily = await getDaily();
+      // v2.5.3: share today's overall cap fairly across the boards still to run, so the first board can't use it all.
+      const left = Math.max(0, (await bOverallCap()) - daily.count), boardsLeft = st.boards.length - i;
+      const share = Math.max(1, Math.ceil(left / boardsLeft));
+      const cap = Math.min(settings[board.id].cap, ((daily.boards || {})[board.id] || 0) + share);
       if (((daily.boards || {})[board.id] || 0) >= cap) { await log("info", `${board.name}: today's cap reached (${cap}). Next board.`); continue; }
       // v2.4: is the user signed in to this board? Report it; skip the board (not the run) when signed out.
       let conn = null;
