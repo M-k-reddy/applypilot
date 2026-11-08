@@ -445,7 +445,7 @@ const F_ALIAS = {
   software: ["sde", "developer", "programmer", "full stack", "fullstack", "backend", "back end", "frontend", "front end", "web develop"],
   developer: ["sde", "software engineer", "programmer", "full stack", "backend", "frontend"],
 };
-const fStem = (w) => w.replace(/(ing|ers|er|s)$/, "") || w;
+const fStem = (w) => w.replace(/(ing|s)$/, "") || w;
 const fWords = (t) => fNorm(t).split(/[^a-z0-9+#.]+/).filter(Boolean);
 function fRoleHit(role, hay, hayStems) {
   const r = fNorm(role).trim(); if (!r) return false;
@@ -457,8 +457,9 @@ function fRoleHit(role, hay, hayStems) {
 }
 function bFilter(j, f) {
   const hay = fNorm(`${j.title || ""} ${j.text || ""}`);
-  const hayStems = fWords(hay).map(fStem);
-  if (f.roles.length && !f.roles.some((r) => fRoleHit(r, hay, hayStems))) return false;
+  // v2.5.5: roles match the job TITLE only (skills lists made every "Python" or "development" job pass).
+  const th = fNorm(j.title || j.text || ""), thStems = fWords(th).map(fStem);
+  if (f.roles.length && !f.roles.some((r) => fRoleHit(r, th, thStems))) return false;
   if (f.locations.length && !f.locations.some((l) => (fLoc(l) ? fLoc(l).test(hay) : hay.includes(l)))) return false;
   return true;
 }
