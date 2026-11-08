@@ -440,8 +440,8 @@ const fLoc = (l) => (l === "remote" ? /remote|work from home|wfh/ : null);
 const F_ALIAS = {
   ml: ["machine learning", "deep learning", "tensorflow", "pytorch", "keras", "scikit", "data scien", "computer vision", "nlp", "mlops"],
   ai: ["artificial intelligence", "machine learning", "deep learning", "genai", "generative", "llm", "nlp", "tensorflow", "pytorch", "computer vision", "data scien"],
-  "data scien": ["data analy", "machine learning", "statistic"],
-  python: ["django", "flask", "fastapi", "pandas", "numpy", "data analy", "tensorflow", "pytorch"],
+  "data scien": ["machine learning", "statistic"],
+  python: ["django", "flask", "fastapi"],
   software: ["sde", "developer", "programmer", "full stack", "fullstack", "backend", "back end", "frontend", "front end", "web develop"],
   developer: ["sde", "software engineer", "programmer", "full stack", "backend", "frontend"],
 };
