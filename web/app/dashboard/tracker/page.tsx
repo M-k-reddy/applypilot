@@ -3,16 +3,17 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useApp, useBusy } from "@/components/AppContext";
 import { PageHead, Empty, Spinner } from "@/components/ui";
-import { weekStats, siteOf, type AppRow } from "@/lib/stats";
+import { weekStats, siteOf, BOARD_TABS, boardLabel, initials, istTime, type AppRow } from "@/lib/stats";
 
 const COLS = [
-  { id: "saved", label: "Saved", color: "var(--muted)" },
-  { id: "needs_review", label: "Needs review", color: "var(--warn)" },
-  { id: "applied", label: "Applied", color: "var(--info)" },
-  { id: "interview", label: "Interview", color: "var(--brand)" },
-  { id: "offer", label: "Offer", color: "var(--ok)" },
-  { id: "rejected", label: "Rejected", color: "var(--bad)" }
+  { id: "saved", label: "Saved", cls: "" },
+  { id: "needs_review", label: "Needs review", cls: "badge-warn" },
+  { id: "applied", label: "Applied", cls: "badge-ok" },
+  { id: "interview", label: "Interview", cls: "badge-brand" },
+  { id: "offer", label: "Offer", cls: "badge-ok" },
+  { id: "rejected", label: "Rejected", cls: "badge-bad" }
 ];
+const boardOf = (a: AppRow) => (a.board && BOARD_TABS.includes(a.board) ? a.board : "others");
 
 function CardEditor({ a, onClose, onSave, onDelete }: { a: AppRow; onClose: () => void; onSave: (patch: Partial<AppRow>) => Promise<void>; onDelete: () => Promise<void> }) {
   const [notes, setNotes] = useState(a.notes || "");
@@ -48,10 +49,10 @@ export default function TrackerPage() {
   const { api, toast } = useApp();
   const { busy, run } = useBusy();
   const [apps, setApps] = useState<AppRow[] | null>(null);
-  const [dragId, setDragId] = useState<string | null>(null);
-  const [over, setOver] = useState<string | null>(null);
   const [editing, setEditing] = useState<AppRow | null>(null);
   const [adding, setAdding] = useState(false);
+  const [board, setBoard] = useState("all");
+  const [status, setStatus] = useState("all");
   const [form, setForm] = useState({ company: "", title: "", page_url: "" });
 
   useEffect(() => { api<{ applications: AppRow[] }>("/api/applications").then((j) => setApps(j.applications)).catch(() => setApps([])); }, [api]);
@@ -63,29 +64,21 @@ export default function TrackerPage() {
     catch (e: any) { setApps(prev); toast(e.message, true); }
   };
 
-  const drop = (status: string, beforeId?: string) => {
-    if (!dragId || !apps) return;
-    const col = apps.filter((x) => x.status === status && x.id !== dragId).sort((a, b) => (a.position ?? 0) - (b.position ?? 0));
-    let position: number;
-    const idx = beforeId ? col.findIndex((x) => x.id === beforeId) : -1;
-    if (idx === -1) position = (col.at(-1)?.position ?? 0) + 1;
-    else position = idx === 0 ? (col[0].position ?? 0) - 1 : ((col[idx - 1].position ?? 0) + (col[idx].position ?? 0)) / 2;
-    const cur = apps.find((x) => x.id === dragId);
-    patch(dragId, cur?.status === status ? { position } : { status, position });
-    setDragId(null); setOver(null);
-  };
-
   const add = (e: React.FormEvent) => { e.preventDefault(); run("add", async () => {
     const r = await api<{ application: AppRow }>("/api/applications", { method: "POST", json: { ...form, status: "saved" } });
     setApps((xs) => [r.application, ...(xs || [])]); setForm({ company: "", title: "", page_url: "" }); setAdding(false);
   }); };
 
-  const s = weekStats(apps || []);
+  const all = apps || [];
+  const s = weekStats(all);
   const today = new Date().toISOString().slice(0, 10);
+  const inBoard = all.filter((a) => board === "all" || boardOf(a) === board);
+  const rows = inBoard.filter((a) => status === "all" || a.status === status)
+    .sort((a, b) => Date.parse(b.applied_at || b.updated_at) - Date.parse(a.applied_at || a.updated_at));
 
   return (
     <>
-      <PageHead title="Tracker" sub="Drag cards between columns. Click a card for notes and a follow-up date.">
+      <PageHead title="Applied jobs" sub={`${s.thisWeek} applied this week · ${s.interviews} interviews`}>
         <button className="btn btn-primary" onClick={() => setAdding(!adding)}>+ Add application</button>
       </PageHead>
 
@@ -93,7 +86,7 @@ export default function TrackerPage() {
         <div className="stat"><b>{s.thisWeek}</b><span>Applied this week</span></div>
         <div className="stat"><b>{s.responseRate}%</b><span>Response rate</span></div>
         <div className="stat"><b>{s.interviews}</b><span>Interviews & offers</span></div>
-        <div className="stat"><b>{(apps || []).length}</b><span>Total cards</span></div>
+        <div className="stat"><b>{all.length}</b><span>Total cards</span></div>
       </div>
 
       {adding && (
@@ -108,47 +101,50 @@ export default function TrackerPage() {
       )}
 
       {apps === null ? <div className="skeleton" style={{ height: 360 }} /> : apps.length === 0 ? (
-        <Empty icon="▦" title="Your board is empty" body="Save a job from search or the Chrome extension, or add one manually. Autofilled applications appear here too." action={{ href: "/dashboard/jobs", label: "Find jobs" }} />
+        <Empty icon="▦" title="No applications yet" body="Save a job from search or the Chrome extension, or add one manually. Auto-apply results appear here too." action={{ href: "/dashboard/jobs", label: "Find jobs" }} />
       ) : (
-        <div className="kanban" aria-label="Application board">
-          {COLS.map((c) => {
-            const items = apps.filter((a) => a.status === c.id).sort((a, b) => (a.position ?? 0) - (b.position ?? 0) || Date.parse(b.updated_at) - Date.parse(a.updated_at));
+        <>
+          <div className="tabs" role="tablist" aria-label="Job boards" style={{ marginBottom: 12 }}>
+            {["all", ...BOARD_TABS, "others"].map((b) => (
+              <button key={b} role="tab" aria-selected={board === b} onClick={() => setBoard(b)}>
+                {b === "all" ? "All" : boardLabel(b)} <span className="badge">{b === "all" ? all.length : all.filter((a) => boardOf(a) === b).length}</span>
+              </button>
+            ))}
+          </div>
+          <div className="chips" style={{ marginBottom: 6 }} aria-label="Status filter">
+            {[{ id: "all", label: "All" }, ...COLS].map((c) => (
+              <button key={c.id} className="chip" aria-pressed={status === c.id} onClick={() => setStatus(c.id)}>
+                {c.label} {c.id === "all" ? inBoard.length : inBoard.filter((a) => a.status === c.id).length}
+              </button>
+            ))}
+          </div>
+          {rows.length === 0 ? <p className="small muted" style={{ padding: 16 }}>Nothing here.</p> : rows.map((a) => {
+            const col = COLS.find((c) => c.id === a.status);
+            const overdue = a.follow_up && a.follow_up <= today && !["offer", "rejected"].includes(a.status);
+            const when = a.applied_at ? `Applied ${istTime(a.applied_at)}` : `Updated ${istTime(a.updated_at)}`;
             return (
-              <section key={c.id} className={`kcol ${over === c.id ? "over" : ""}`} aria-label={`${c.label} column`}
-                onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; setOver(c.id); }}
-                onDragLeave={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) setOver(null); }}
-                onDrop={(e) => { e.preventDefault(); drop(c.id); }}>
-                <div className="kcol-head"><span><span className="dot" style={{ background: c.color }} />{c.label}</span><span className="badge">{items.length}</span></div>
-                {items.map((a) => {
-                  const overdue = a.follow_up && a.follow_up <= today && !["offer", "rejected"].includes(a.status);
-                  return (
-                    <div key={a.id} className={`kcard ${dragId === a.id ? "dragging" : ""} ${overdue ? "overdue" : ""}`} draggable
-                      onDragStart={(e) => { setDragId(a.id); e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", a.id); }}
-                      onDragEnd={() => { setDragId(null); setOver(null); }}
-                      onDrop={(e) => { e.preventDefault(); e.stopPropagation(); drop(c.id, a.id); }}
-                      onClick={() => setEditing(a)} onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setEditing(a); } }}
-                      role="button" tabIndex={0} aria-label={`${a.company || "Company"}, ${a.title || "role"}. Open details`}>
-                      <h4>{a.company || "Company"}</h4>
-                      <div className="meta">{a.title || "—"}</div>
-                      <div className="row" style={{ marginTop: 8, gap: 6 }}>
-                        {siteOf(a) && (a.page_url
-                          ? <a className="badge" href={a.page_url} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} title="Open the job">{siteOf(a)} ↗</a>
-                          : <span className="badge">{siteOf(a)}</span>)}
-                        {a.source === "auto" && <span className="badge badge-ok" title="Found automatically by Auto mode">Auto</span>}
-                        {a.autofilled_at && <span className="badge badge-brand">Autofilled</span>}
-                        {a.follow_up && <span className={`badge ${overdue ? "badge-warn" : ""}`}>Follow up {a.follow_up}</span>}
-                        {a.notes && <span className="badge" title={a.notes}>✎ note</span>}
-                      </div>
-                    </div>
-                  );
-                })}
-                {items.length === 0 && <div className="tiny muted center" style={{ padding: 16 }}>Drop here</div>}
-              </section>
+              <div key={a.id} className="jrow click" role="button" tabIndex={0} onClick={() => setEditing(a)}
+                onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setEditing(a); } }}
+                aria-label={`${a.title || "Role"} at ${a.company || "company"}. Open details`}>
+                <div className="jlogo" aria-hidden="true">{initials(a.company || a.title)}</div>
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <h3>{a.title || "Role"}</h3>
+                  <div className="small muted">{a.company || "Company"}</div>
+                  <div className="tiny muted" style={{ marginTop: 6 }}>
+                    {[siteOf(a), `${when} IST`].filter(Boolean).join(" · ")}{a.source === "auto" && <> · <b>Auto</b></>}
+                    {a.follow_up && <span style={overdue ? { color: "var(--warn)" } : undefined}> · Follow up {a.follow_up}</span>}
+                    {a.notes && <span title={a.notes}> · ✎</span>}
+                  </div>
+                </div>
+                <div className="jside">
+                  <span className={`badge ${col?.cls || ""}`}>{col?.label || a.status}</span>
+                  {a.page_url && <a className="small" href={a.page_url} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()}>View job ↗</a>}
+                </div>
+              </div>
             );
           })}
-        </div>
+        </>
       )}
-      <p className="tiny muted" style={{ marginTop: 10 }}>Keyboard: open a card with Enter and change its status there.</p>
 
       {editing && <CardEditor a={editing} onClose={() => setEditing(null)}
         onSave={async (p) => { await patch(editing.id, p); setEditing(null); }}

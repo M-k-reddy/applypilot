@@ -384,3 +384,13 @@ mark.kw { background: color-mix(in srgb, var(--ok) 22%, transparent); color: inh
   .resume-sheet { box-shadow: none; margin: 0; padding: 0; width: auto; }
   a[href]::after { content: none !important; }
 }
+
+/* job rows (tracker + recommended) */
+.jrow { display: flex; gap: 12px; align-items: flex-start; padding: 14px 16px; border: 1px solid var(--border); border-radius: var(--r-lg); background: var(--surface); }
+.jrow + .jrow { margin-top: 10px; }
+.jrow.click { cursor: pointer; } .jrow.click:hover { box-shadow: var(--shadow-sm); }
+.jrow h3 { margin: 0; font-size: 1rem; }
+.jlogo { flex: none; width: 42px; height: 42px; border-radius: 10px; background: var(--brand-soft); color: var(--brand); font-weight: 700; display: grid; place-items: center; }
+.jside { margin-left: auto; display: flex; flex-direction: column; align-items: flex-end; gap: 8px; flex: none; }
+button.chip { cursor: pointer; font: inherit; font-size: .8rem; font-weight: 600; }
+button.chip[aria-pressed="true"] { background: var(--text); color: var(--surface); border-color: var(--text); }

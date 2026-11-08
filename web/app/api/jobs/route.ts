@@ -6,10 +6,17 @@ export const dynamic = "force-dynamic";
 export const OPTIONS = preflight;
 
 // GET /api/jobs?q=react intern&location=Hyderabad&remote=true&fresher=true  -> live search across free sources
+// GET /api/jobs?recommended=1                                                  -> recs collected from the user's job boards (newest first)
 // GET /api/jobs?saved=1                                                        -> this user's saved jobs
 export const GET = handle(async (req) => {
   const { user, db } = await requireUser(req);
   const u = new URL(req.url);
+  if (u.searchParams.get("recommended")) {
+    const { data, error } = await db.from("jobs").select("id, external_id, source, title, company, location, apply_url, salary, description, fit_score, created_at")
+      .eq("user_id", user.id).like("external_id", "rec:%").order("created_at", { ascending: false }).limit(300);
+    if (error) throw new HttpError(500, error.message);
+    return Response.json({ jobs: (data || []).map((j: any) => ({ ...j, board: String(j.external_id).split(":")[1] })) });
+  }
   if (u.searchParams.get("saved")) {
     const { data, error } = await db.from("jobs").select("id, external_id, source, title, company, location, remote, apply_url, salary, posted_at, fit_score, missing_keywords, created_at, cover_letter")
       .eq("user_id", user.id).order("created_at", { ascending: false }).limit(100);

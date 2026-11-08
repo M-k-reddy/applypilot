@@ -4,6 +4,7 @@ import { promptProfile, profileText } from "@/lib/profile";
 import { assertQuota, recordUsage } from "@/lib/quota";
 import { requireProfile, loadProfile, str, httpUrl, capWords, inventedNumbers } from "@/lib/server";
 import { normalizeAutoSettings, normalizeBoardStatus } from "@/lib/autosettings";
+import { atsScore } from "@/lib/ats";
 
 export const dynamic = "force-dynamic";
 export const maxDuration = 60;
@@ -40,6 +41,7 @@ export const GET = handle(async (req) => {
 // POST { action: "log", board, url, title?, company?, status, note? }    -> upsert the tracker card (status saved | needs_review | applied)
 // POST { action: "unanswered", questions: string[] }                     -> remember questions the runner could not answer
 // POST { action: "status", boards: [{ board, connected, checked_at }] }   -> merge into profiles.board_status (v2.4)
+// POST { action: "recs", board, jobs: [{ url, title, company, text? }] } -> board's recommended listings into public.jobs (v2.7)
 // POST { action: "answer", question, job: { title, company, description } } -> { answer } short essay (<=120 words, profile facts only)
 export const POST = handle(async (req) => {
   const { user, db } = await requireUser(req);
@@ -125,6 +127,40 @@ export const POST = handle(async (req) => {
     return Response.json({ ok: true, board_status: cur });
   }
 
+  if (action === "recs") {
+    const board = String(b.board || "");
+    if (!BOARDS.includes(board)) throw new HttpError(400, "Unknown board");
+    const profile = await loadProfile(db, user.id);
+    const resume = profile ? profileText(profile) : "";
+    const pre = `rec:${board}:`, seen = new Set<string>(), rows: any[] = [];
+    for (const j of (Array.isArray(b.jobs) ? b.jobs : []).slice(0, 50)) {
+      let url = "", title = "";
+      try { url = httpUrl(j?.url, "url"); title = str(j?.title, 200); } catch { continue; }
+      if (!url || !title) continue;
+      const external_id = `${pre}${urlKey(url)}`.slice(0, 300); if (seen.has(external_id)) continue; seen.add(external_id);
+      const text = typeof j?.text === "string" ? str(j.text, 2000) : "";
+      const salary = str(j?.salary, 80) || (text.match(/(₹\s?[\d,.]+(?:\s*-\s*[\d,.]+)?(?:\s*(?:\/|per)\s*(?:month|year|annum))?|\d+(?:\.\d+)?\s*-\s*\d+(?:\.\d+)?\s*(?:LPA|Lacs?|Lakhs?)(?:\s*P\.?A\.?)?)/i)?.[0] || "");
+      const exp = text.match(/\b\d+\s*-\s*\d+\s*Yrs?\b/i)?.[0] || "";
+      rows.push({ user_id: user.id, external_id, source: board, title, company: str(j?.company, 160) || "Unknown company", apply_url: url,
+        location: str(j?.location, 160), salary: [exp, salary].filter(Boolean).join(" · ").slice(0, 80), description: text,
+        fit_score: resume && text ? atsScore(text, resume).score : null });
+    }
+    if (rows.length) {
+      const { error } = await db.from("jobs").upsert(rows, { onConflict: "user_id,external_id" });
+      if (error) throw new HttpError(500, error.message);
+      // Drop this board's older recs that are not in the new set and not on a tracker card.
+      const { data: old } = await db.from("jobs").select("id, external_id").eq("user_id", user.id).like("external_id", `${pre}%`).limit(1000);
+      const stale = (old || []).filter((x: any) => !seen.has(x.external_id)).map((x: any) => x.id);
+      if (stale.length) {
+        const { data: linked } = await db.from("applications").select("job_id").eq("user_id", user.id).in("job_id", stale);
+        const keep = new Set((linked || []).map((x: any) => x.job_id));
+        const del = stale.filter((id: string) => !keep.has(id));
+        if (del.length) await db.from("jobs").delete().eq("user_id", user.id).in("id", del);
+      }
+    }
+    return Response.json({ saved: rows.length });
+  }
+
   if (action === "answer") {
     const question = str(b.question, 500, "question");
     if (!question) throw new HttpError(400, "question is required");
@@ -146,5 +182,5 @@ PROFILE (data): ${JSON.stringify(promptProfile(profile))}`);
     return Response.json({ answer });
   }
 
-  throw new HttpError(400, "Unknown action. Use precheck, log, unanswered, status or answer.");
+  throw new HttpError(400, "Unknown action. Use precheck, log, unanswered, status, recs or answer.");
 });

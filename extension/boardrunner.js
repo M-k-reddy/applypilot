@@ -489,12 +489,13 @@ function bFilter(j, f) {
 
 // ───────── board: collect recommended listings, then apply one by one
 async function bCollect(ctx, tabId, board, known, doneSet, filt = { roles: [], locations: [] }) {
-  const cands = [], seen = new Set();
+  const cands = [], seen = new Set(), recs = [];
   let skippedApplied = 0, skippedKnown = 0, ineligible = 0, offFilter = 0;
   const take = (jobs) => {
     for (const j of jobs || []) {
       const k = urlKey(j.url); if (!k || seen.has(k)) continue; seen.add(k);
       if (BCFG.EXCLUDED.test(hostOf(j.url)) || !board.hosts.test(hostOf(j.url))) continue;
+      if (recs.length < 50 && !j.applied && j.title) recs.push({ url: j.url, title: j.title, company: j.company || "", text: String(j.text || "").slice(0, 2000) });
       if (doneSet.has(k)) continue;
       if (j.applied) { skippedApplied++; continue; }
       if (known.urls.has(k) || (j.company && j.title && known.keys.has(`${normKey(j.company)}|${normKey(j.title)}`))) { skippedKnown++; continue; }
@@ -530,7 +531,7 @@ async function bCollect(ctx, tabId, board, known, doneSet, filt = { roles: [], l
       await harvest();
     }
   }
-  return { cands, skippedApplied, skippedKnown, ineligible, offFilter };
+  return { cands, recs, skippedApplied, skippedKnown, ineligible, offFilter };
 }
 
 let boardRunner = null, boardCtx = null, keepAlive = null;
@@ -577,6 +578,11 @@ async function boardLoop() {
       let col;
       try { col = await bCollect(ctx, tabId, board, known, doneSet, filt); }
       catch (e) { if (e instanceof BoardSkip) { await log("warn", e.message); continue; } throw e; }
+      // v2.7: share the board's recommended listings with the website (Recommended jobs page). Never stops the run.
+      if (col.recs.length) {
+        try { await api("/api/auto/board", { body: { action: "recs", board: board.id, jobs: col.recs } }); }
+        catch (e) { await log("warn", `${board.name}: could not share recommended jobs: ${e && e.message || e}`); }
+      }
       await bPatch({ found: (await bGet()).found + col.cands.length });
       await log(col.cands.length ? "ok" : "info", `${board.name}: ${col.cands.length} recommended job${col.cands.length === 1 ? "" : "s"} to try (${col.skippedApplied} already applied on ${board.name}, ${col.skippedKnown} already in your tracker${col.ineligible ? `, ${col.ineligible} without on-board apply` : ""}${col.offFilter ? `, ${col.offFilter} outside your roles/locations` : ""}).`);
 

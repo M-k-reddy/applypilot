@@ -12,6 +12,7 @@ const NAV = [
   { href: "/dashboard", label: "Overview", i: "◧" },
   { href: "/dashboard/profile", label: "Profile", i: "☺" },
   { href: "/dashboard/jobs", label: "Jobs", i: "⌕" },
+  { href: "/dashboard/recommended", label: "Recommended", i: "★" },
   { href: "/dashboard/tailor", label: "Tailor", i: "⇄" },
   { href: "/dashboard/tracker", label: "Tracker", i: "▦" },
   { href: "/dashboard/auto", label: "Auto-apply", i: "↻" },
