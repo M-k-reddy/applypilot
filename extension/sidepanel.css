@@ -1,3 +1,4 @@
+[hidden] { display: none !important; }
 /* ApplyPilot side panel v2.5. 8px spacing scale, 16px card padding, 12px radius. One filled brand button per screen. */
 :root {
   --bg: #f6f7fb; --surface: #fff; --surface-2: #f9fafc; --border: #e3e6ef; --text: #0f1222; --muted: #6b7189;
