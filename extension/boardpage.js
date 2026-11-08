@@ -134,6 +134,7 @@
     const title = txt(q1(J.title), 200), company = txt(q1(J.company), 160);
     const descEl = q1(J.description);
     const description = descEl ? (descEl.innerText || "").slice(0, 12000) : "";
+    const pageTop = (document.body && document.body.innerText || "").slice(0, 4000); // v2.8: salary/stipend line sits in the header
     const appliedBtn = clickables().some((b) => APPLIED_EXACT.test(btnLabel(b)));
     const applied = !!q1(J.applied) || appliedBtn;
     const { on, ext } = applyButtons(c);
@@ -144,7 +145,7 @@
       const a = ext.tagName === "A" ? ext : ext.closest("a");
       href = a && a.getAttribute("href") ? abs(a.getAttribute("href")) : (ext.getAttribute("data-href") || ext.getAttribute("href") || "");
     }
-    return { title, company, description, applied, kind, href, label, url: location.href };
+    return { title, company, description, pageTop, applied, kind, href, label, url: location.href };
   }
   function clickApply(id) {
     const c = cfg(id); if (!c) return { clicked: false };

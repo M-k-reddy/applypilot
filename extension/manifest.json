@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "ApplyPilot \u2013 AI job copilot",
   "short_name": "ApplyPilot",
-  "version": "2.7.1",
+  "version": "2.8.0",
   "description": "Save jobs, see your match, fill application forms in one click. Optional Auto mode applies only when confident.",
   "minimum_chrome_version": "116",
   "permissions": [

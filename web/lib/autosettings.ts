@@ -7,6 +7,7 @@ export type AutoSettings = {
   boards: Record<BoardId, { on: boolean; cap: number }>;
   daily_cap: number;             // overall board applications per IST day
   min_match: number;             // 0..100, skip jobs whose ATS match is below this (0 = off)
+  min_lpa: number;               // v2.8: skip jobs whose listed pay tops out below this (lakhs per year; 0 = off; "not disclosed" is kept)
   roles: string[];               // role/keyword filter on job titles (empty = all recommended jobs)
   locations: string[];           // location filter on listing text (empty = any location)
 };
@@ -35,7 +36,7 @@ export function normalizeAutoSettings(raw: any): AutoSettings {
     const b = r.boards && typeof r.boards === "object" && r.boards[id] && typeof r.boards[id] === "object" ? r.boards[id] : {};
     boards[id] = { on: typeof b.on === "boolean" ? b.on : DEF_BOARDS[id].on, cap: int(b.cap, 1, 100, DEF_BOARDS[id].cap) };
   }
-  return { enabled: r.enabled === true, run_time: t, boards, daily_cap: int(r.daily_cap, 1, 200, 20), min_match: int(r.min_match, 0, 100, 0), roles: cleanList(r.roles), locations: cleanList(r.locations) };
+  return { enabled: r.enabled === true, run_time: t, boards, daily_cap: int(r.daily_cap, 1, 200, 20), min_match: int(r.min_match, 0, 100, 0), min_lpa: Math.max(0, Math.min(100, Math.round((Number(r.min_lpa) || 0) * 10) / 10)), roles: cleanList(r.roles), locations: cleanList(r.locations) };
 }
 
 export function normalizeBoardStatus(raw: any): BoardStatus {

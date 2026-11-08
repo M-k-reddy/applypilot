@@ -127,6 +127,7 @@ export default function AutoApplyPage() {
           <div className="row">
             <label className="field"><span>Run time (IST)</span><input className="input" type="time" value={s.run_time} onChange={(e) => setS({ ...s, run_time: e.target.value || "09:00" })} /></label>
             <label className="field"><span>Daily cap (all boards)</span><input className="input" type="number" min={1} max={200} value={s.daily_cap} onChange={(e) => setS({ ...s, daily_cap: Number(e.target.value) })} style={{ width: 110 }} /></label>
+            <label className="field"><span>Min salary, LPA (0 = off)</span><input className="input" type="number" min={0} max={100} step={0.5} value={s.min_lpa ?? 0} onChange={(e) => setS({ ...s, min_lpa: Number(e.target.value) })} style={{ width: 110 }} /></label>
             <label className="field"><span>Min match % (0 = off)</span><input className="input" type="number" min={0} max={100} step={5} value={s.min_match} onChange={(e) => setS({ ...s, min_match: Number(e.target.value) })} style={{ width: 110 }} /></label>
           </div>
           <div className="row">

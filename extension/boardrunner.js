@@ -286,7 +286,21 @@ function bMinYears(text) {
   }
   return min;
 }
-function bJudge(info, job, profile) {
+/** Highest pay the text lists, in lakhs per year. null = not stated. Handles "3.5-5.5 Lacs P.A.", "4 LPA", "₹10,000 /month", "₹3,00,000 - 4,00,000 a year". */
+function bMaxLpa(text) {
+  const T = String(text || "").toLowerCase().replace(/,/g, ""); let max = null; let m;
+  const put = (v) => { if (Number.isFinite(v) && v > 0 && v < 500) max = max == null ? v : Math.max(max, v); };
+  const lakh = /(\d+(?:\.\d+)?)\s*(?:-|–|to)?\s*(\d+(?:\.\d+)?)?\s*(?:lacs?|lakhs?|lpa|l\.p\.a)/g;
+  while ((m = lakh.exec(T))) put(Number(m[2] || m[1]));
+  const rupee = /(?:₹|rs\.?|inr)\s*(\d{3,8})(?:\s*(?:-|–|to)\s*(?:₹|rs\.?|inr)?\s*(\d{3,8}))?\s*(?:\/|per|a)?\s*(month|mo\b|year|yr|annum|annual)?/g;
+  while ((m = rupee.exec(T))) { const v = Number(m[2] || m[1]); const per = m[3] || ""; put(/mo/.test(per) || (!per && v < 200000) ? (v * 12) / 1e5 : v / 1e5); }
+  return max;
+}
+function bJudge(info, job, profile, minLpa = 0) {
+  if (minLpa > 0) {
+    const pay = bMaxLpa(job.text) ?? bMaxLpa(String(info.pageTop || "").slice(0, 1500)); // card first; page header only if the card had none
+    if (pay != null && pay < minLpa) return `Pays up to ${Math.round(pay * 10) / 10} LPA; your minimum is ${minLpa} LPA.`;
+  }
   const exp = Number(profile.total_experience_years) || 0;
   const title = info.title || job.title || "";
   if (exp < 3 && B_SENIOR.test(title)) return `Title "${title}" is a senior role; you have ${exp} yr experience.`;
@@ -310,7 +324,7 @@ async function bApplyJob(ctx, tabId, board, job, profile, opts) {
   if (info.kind !== "onboard") return { outcome: "skip", reason: "No on-board Apply button (closed, expired or external)." };
 
   // v2.6: agent checks. Read the job like a person would before applying: seniority, years asked, then fit vs your resume.
-  const verdict = bJudge(info, job, profile);
+  const verdict = bJudge(info, job, profile, opts.minLpa || 0);
   if (verdict) return { outcome: "skip", lowMatch: true, reason: verdict };
   if (opts.fitCheck && (info.description || "").length > 80) {
     try {
@@ -598,7 +612,7 @@ async function boardLoop() {
         const jctx = { cancelled: false, deadline: Date.now() + B_JOB_MS, clicked: false, submitClicked: false };
         const onStop = setInterval(() => { if (ctx.cancelled) { jctx.cancelled = true; jctx.cancelReason = ctx.cancelReason; } }, 300);
         let res, stopMsg = "";
-        try { res = await bApplyJob(jctx, tabId, board, job, profile, { fitCheck, minScore }); }
+        try { res = await bApplyJob(jctx, tabId, board, job, profile, { fitCheck, minScore, minLpa: Math.max(0, Number(srv && srv.min_lpa) || 0) }); }
         catch (e) {
           if (e instanceof BoardStop) { stopMsg = e.message; res = { outcome: jctx.clicked ? "review" : "none", reason: `Stopped: ${e.message}` }; }
           else if (e instanceof Cancelled || jctx.cancelled) res = { outcome: jctx.submitClicked ? "review" : "none", reason: jctx.submitClicked ? "Stopped right after Submit. Check whether it went through." : "Stopped." };
