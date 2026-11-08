@@ -3,7 +3,7 @@ import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useApp, useBusy } from "@/components/AppContext";
 import { PageHead, Empty, Spinner } from "@/components/ui";
-import { weekStats, type AppRow } from "@/lib/stats";
+import { weekStats, siteOf, type AppRow } from "@/lib/stats";
 
 const COLS = [
   { id: "saved", label: "Saved", color: "var(--muted)" },
@@ -23,7 +23,7 @@ function CardEditor({ a, onClose, onSave, onDelete }: { a: AppRow; onClose: () =
   return (
     <div className="scrim" style={{ display: "grid", placeItems: "center", zIndex: 70, background: "rgba(0,0,0,.4)", position: "fixed", inset: 0 }} onClick={onClose}>
       <div className="card" role="dialog" aria-modal="true" aria-labelledby="card-title" style={{ width: "min(520px, 92vw)" }} onClick={(e) => e.stopPropagation()}>
-        <div className="card-head"><div><h3 id="card-title">{a.company || "Company"}</h3><div className="small muted">{a.title}</div></div><button className="btn btn-icon btn-ghost" onClick={onClose} aria-label="Close">✕</button></div>
+        <div className="card-head"><div><h3 id="card-title">{a.company || "Company"}</h3><div className="small muted">{a.title}{siteOf(a) ? ` · ${siteOf(a)}` : ""}</div></div><button className="btn btn-icon btn-ghost" onClick={onClose} aria-label="Close">✕</button></div>
         <div className="stack">
           <label className="field"><span>Status</span>
             <select className="select" value={status} onChange={(e) => setStatus(e.target.value)}>{COLS.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}</select>
@@ -131,6 +131,9 @@ export default function TrackerPage() {
                       <h4>{a.company || "Company"}</h4>
                       <div className="meta">{a.title || "—"}</div>
                       <div className="row" style={{ marginTop: 8, gap: 6 }}>
+                        {siteOf(a) && (a.page_url
+                          ? <a className="badge" href={a.page_url} target="_blank" rel="noopener noreferrer" onClick={(e) => e.stopPropagation()} title="Open the job">{siteOf(a)} ↗</a>
+                          : <span className="badge">{siteOf(a)}</span>)}
                         {a.source === "auto" && <span className="badge badge-ok" title="Found automatically by Auto mode">Auto</span>}
                         {a.autofilled_at && <span className="badge badge-brand">Autofilled</span>}
                         {a.follow_up && <span className={`badge ${overdue ? "badge-warn" : ""}`}>Follow up {a.follow_up}</span>}

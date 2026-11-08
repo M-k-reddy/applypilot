@@ -26,7 +26,7 @@ export const GET = handle(async (req) => {
     return Response.json({ queue });
   }
   const { data, error } = await db.from("applications")
-    .select("id, job_id, company, title, page_url, status, source, notes, follow_up, position, created_at, updated_at, applied_at, autofilled_at")
+    .select("id, job_id, company, title, page_url, status, source, board, notes, follow_up, position, created_at, updated_at, applied_at, autofilled_at")
     .eq("user_id", user.id).order("position", { ascending: true }).order("updated_at", { ascending: false }).limit(500);
   if (error) throw new HttpError(500, error.message);
   return Response.json({ applications: data || [] });
