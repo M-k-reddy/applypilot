@@ -436,9 +436,29 @@ const patchBoardCurrent = (p) => serial(async () => { const s = await bGet(); if
 // v2.4.1: website roles/locations filters (profiles.auto_settings.roles / .locations). Empty list = no filter.
 const fNorm = (t) => String(t || "").toLowerCase().replace(/\s+/g, " ");
 const fLoc = (l) => (l === "remote" ? /remote|work from home|wfh/ : null);
+// v2.5.2: smarter role match: word stems (engineering ~ engineer), aliases (ml = machine learning) and related skills.
+const F_ALIAS = {
+  ml: ["machine learning", "deep learning", "tensorflow", "pytorch", "keras", "scikit", "data scien", "computer vision", "nlp", "mlops"],
+  ai: ["artificial intelligence", "machine learning", "deep learning", "genai", "generative", "llm", "nlp", "tensorflow", "pytorch", "computer vision", "data scien"],
+  "data scien": ["data analy", "machine learning", "statistic"],
+  python: ["django", "flask", "fastapi", "pandas", "numpy", "data analy", "tensorflow", "pytorch"],
+  software: ["sde", "developer", "programmer", "full stack", "fullstack", "backend", "back end", "frontend", "front end", "web develop"],
+  developer: ["sde", "software engineer", "programmer", "full stack", "backend", "frontend"],
+};
+const fStem = (w) => w.replace(/(ing|ers|er|s)$/, "") || w;
+const fWords = (t) => fNorm(t).split(/[^a-z0-9+#.]+/).filter(Boolean);
+function fRoleHit(role, hay, hayStems) {
+  const r = fNorm(role).trim(); if (!r) return false;
+  if (hay.includes(r)) return true;
+  const ws = fWords(r).filter((w) => !["and", "or", "the", "a", "of", "jobs", "job", "role", "roles"].includes(w));
+  if (ws.length && ws.every((w) => hayStems.some((h) => h.startsWith(fStem(w))))) return true;
+  const keys = Object.keys(F_ALIAS).filter((k) => r.includes(k) || ws.includes(k));
+  return keys.some((k) => F_ALIAS[k].some((a) => hay.includes(a)));
+}
 function bFilter(j, f) {
   const hay = fNorm(`${j.title || ""} ${j.text || ""}`);
-  if (f.roles.length && !f.roles.some((r) => hay.includes(r))) return false;
+  const hayStems = fWords(hay).map(fStem);
+  if (f.roles.length && !f.roles.some((r) => fRoleHit(r, hay, hayStems))) return false;
   if (f.locations.length && !f.locations.some((l) => (fLoc(l) ? fLoc(l).test(hay) : hay.includes(l)))) return false;
   return true;
 }
