@@ -121,7 +121,11 @@
     let on = qa(J.applySel).find((b) => !disabled(b) && !(J.externalText && J.externalText.test(btnLabel(b))) && !APPLIED_EXACT.test(btnLabel(b)))
       || byText(J.applyText);
     if (on && J.externalText && J.externalText.test(btnLabel(on))) on = null;
-    if (on && J.applyRequiresSel && J.applyRequiresSel.length && !q1(J.applyRequiresSel, document, false)) on = null; // e.g. Indeed: "Apply now" without Indeed Apply = external
+    // e.g. Indeed: "Apply now" without Indeed Apply = external. v2.7.1: a plain <button> "Apply now" (no link out, no company-site link) counts as Indeed Apply.
+    if (on && J.applyRequiresSel && J.applyRequiresSel.length && !q1(J.applyRequiresSel, document, false)) {
+      const plainBtn = on.tagName === "BUTTON" && !on.closest("a[href]") && !ext;
+      if (!plainBtn) on = null;
+    }
     return { on, ext };
   }
   function jobInfo(id) {

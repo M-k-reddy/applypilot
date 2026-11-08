@@ -130,9 +130,9 @@
         company: ["[data-testid='inlineHeader-companyName']", "[data-company-name='true']"],
         description: ["#jobDescriptionText"],
         applied: ["[data-testid='applied-label']", ".jobsearch-AppliedBadge"],
-        applySel: ["#indeedApplyButton", "button[id*='indeedApplyButton']", ".jobsearch-IndeedApplyButton-newDesign", "[class*='IndeedApplyButton'] button", ".ia-IndeedApplyButton"],
+        applySel: ["#indeedApplyButton", "button[id*='indeedApplyButton']", "[data-testid*='indeedApply'] button", "button[data-testid*='indeedApply']", "#jobsearch-ViewJobButtons-container button", ".jobsearch-IndeedApplyButton-newDesign", "[class*='IndeedApplyButton'] button", ".ia-IndeedApplyButton"],
         applyText: /^(apply now|easily apply)$/i,
-        applyRequiresSel: ["#indeedApplyButton", "[id*='indeedApply']", "[class*='IndeedApply']", ".ia-IndeedApplyButton", "[data-indeed-apply-jobid]"],
+        applyRequiresSel: ["#indeedApplyButton", "[id*='indeedApply']", "[data-testid*='indeedApply']", "[class*='IndeedApply']", ".ia-IndeedApplyButton", "[data-indeed-apply-jobid]"],
         externalSel: ["#applyButtonLinkContainer a", "[data-testid='applyButton-externalLink']"],
         externalText: /apply on company (site|website)|company site/i
       },
