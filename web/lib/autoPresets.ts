@@ -1,7 +1,7 @@
 // Auto-apply assistant presets. OWNER: edit this list to change the chips on /dashboard/auto.
 // Each preset is a patch of profiles.auto_settings (see lib/autosettings.ts). Only these keys are allowed:
 //   enabled (bool), daily_cap (1..plan max), min_match (0..100), roles (string[]), locations (string[]),
-//   boards (subset of "naukri" | "internshala" | "indeed" | "foundit"; LinkedIn is never allowed), run_time ("HH:MM" IST)
+//   boards (subset of AUTO_BOARDS in lib/autosettings.ts; LinkedIn is never allowed), run_time ("HH:MM" IST)
 import { AUTO_BOARDS, type AutoSettings, type BoardId } from "./autosettings";
 
 export type AutoPatch = Partial<Pick<AutoSettings, "enabled" | "daily_cap" | "min_match" | "roles" | "locations" | "run_time">> & { boards?: BoardId[] };
@@ -16,7 +16,7 @@ export const AUTO_PRESETS: AutoPreset[] = [
   { id: "match70", label: "Only jobs with 70%+ match", patch: { min_match: 70 } }
 ];
 
-export const BOARD_NAMES: Record<BoardId, string> = { naukri: "Naukri", internshala: "Internshala", indeed: "Indeed", foundit: "Foundit" };
+export const BOARD_NAMES: Record<BoardId, string> = { naukri: "Naukri", internshala: "Internshala", indeed: "Indeed", shine: "Shine", hirist: "Hirist", instahyre: "Instahyre", cutshort: "Cutshort", foundit: "Foundit", wellfound: "Wellfound" };
 
 /** Merge a patch into settings. `boards` turns the listed boards on and the rest off. */
 export function applyPatch(s: AutoSettings, p: AutoPatch): AutoSettings {

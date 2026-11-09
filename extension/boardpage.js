@@ -15,7 +15,8 @@
     return [];
   };
   const q1 = (sels, root, needVis) => qa(sels, root, needVis)[0] || null;
-  const disabled = (b) => b.disabled || b.getAttribute("aria-disabled") === "true" || /\bdisabled\b/i.test(b.className || "");
+  // v2.9: match "disabled" as a whole class token only, so Tailwind variants like "disabled:opacity-50" (Wellfound) don't count.
+  const disabled = (b) => b.disabled || b.getAttribute("aria-disabled") === "true" || (typeof b.className === "string" && b.className.split(/\s+/).some((c) => /^(is-|btn-)?disabled$/i.test(c)));
   const CLICKABLE = "button, a, [role=button], input[type=submit], input[type=button], [class*='btn'], [class*='Btn'], [class*='button']";
   const btnLabel = (b) => (txt(b, 120) || b.value || b.getAttribute("aria-label") || "").replace(/\s+/g, " ").trim();
   const clickables = (root = document) => { try { return [...root.querySelectorAll(CLICKABLE)].filter(vis); } catch { return []; } };

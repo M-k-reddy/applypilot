@@ -2,7 +2,8 @@
 // shares background.js's helpers: api, log, serial, getDaily, getCap, istDay, sleep, rand, hostOf, noHash, Cancelled,
 // guard, wait, FATAL, getState (the saved-jobs Auto queue).
 //
-// "Auto-apply recommended jobs": one click, then for each enabled board in order (Naukri → Internshala → Indeed → Foundit)
+// "Auto-apply recommended jobs": one click, then for each enabled board in order (Naukri → Internshala → Indeed → Shine → Hirist →
+// Instahyre → Cutshort → Foundit → Wellfound)
 // the runner opens the board's own *recommended for you* page inside the user's logged-in Chrome, collects the listings,
 // and applies one job at a time in a single background tab, only where the apply flow stays on the board.
 // Gates: per-board + overall daily caps (IST), 25–75s random delay between applications, stop at once on CAPTCHA, login
@@ -268,7 +269,7 @@ function resolveAnswer(q, profile) {
   if (/github/.test(L) && profile.github) return { value: profile.github };
   if (/portfolio|website|personal site/.test(L) && (profile.portfolio || profile.github)) return { value: profile.portfolio || profile.github };
   // Short essays → the server LLM (≤120 words, profile facts only).
-  if ((q.kind === "textarea" || q.kind === "text") && /cover letter|why should (we|you) (hire|be hired)|why (do you want|are you interested|are you a good fit|this (role|internship|job))|tell us about yourself|about yourself|what makes you|why should we select/.test(L)) return { llm: true };
+  if ((q.kind === "textarea" || q.kind === "text") && /cover letter|why should (we|you) (hire|be hired)|why (do you want|are you interested|are you a good fit|this (role|internship|job))|tell us about yourself|about yourself|what makes you|why should we select|what interests you|why (would you like|do you want) to (work|join)|cover note|note to (the )?(hiring|recruiter|founder)/.test(L)) return { llm: true };
   // Optional checkbox we do not understand: leave it alone; required consent/declarations go to the user.
   if (q.kind === "checkbox" && !q.required) return { skip: true };
   return { unknown: "not in your profile or answer bank" };
@@ -502,7 +503,7 @@ function bFilter(j, f) {
 }
 
 // ───────── board: collect recommended listings, then apply one by one
-async function bCollect(ctx, tabId, board, known, doneSet, filt = { roles: [], locations: [] }) {
+async function bCollect(ctx, tabId, board, known, doneSet, filt = { roles: [], locations: [] }, searchRoles = []) {
   const cands = [], seen = new Set(), recs = [];
   let skippedApplied = 0, skippedKnown = 0, ineligible = 0, offFilter = 0;
   const take = (jobs) => {
@@ -533,7 +534,10 @@ async function bCollect(ctx, tabId, board, known, doneSet, filt = { roles: [], l
     await bGo(ctx, tabId, url, board);
     await bCheck(ctx, tabId, board, "recommended page");
     const landed = (await chrome.tabs.get(tabId)).url;
-    if (!board.hosts.test(hostOf(landed))) throw new BoardSkip(`${board.name} redirected away from its recommended page.`);
+    if (!board.hosts.test(hostOf(landed))) {
+      if (board.search && searchRoles.length) { await log("info", `${board.name}: no recommended feed; searching your roles instead.`); break; }
+      throw new BoardSkip(`${board.name} redirected away from its recommended page.`);
+    }
     await harvest();
     const tabs = await bCall(tabId, "tabs", [board.id]);
     for (const label of tabs || []) {
@@ -542,6 +546,15 @@ async function bCollect(ctx, tabId, board, known, doneSet, filt = { roles: [], l
       if (!(await bCall(tabId, "clickTab", [board.id, label]))) continue;
       await bSettle(ctx, tabId);
       await bCheck(ctx, tabId, board, `tab ${label}`);
+      await harvest();
+    }
+  }
+  // v2.9: boards with search(role) fall back to searching your roles when the recommended feed gave nothing to try.
+  if (!cands.length && board.search && searchRoles.length) {
+    for (const role of searchRoles.slice(0, 3)) {
+      if (cands.length >= B_MAX_CANDIDATES) break;
+      await bGo(ctx, tabId, board.search(role), board);
+      await bCheck(ctx, tabId, board, `search "${role}"`);
       await harvest();
     }
   }
@@ -567,6 +580,8 @@ async function boardLoop() {
     const list = (v) => (Array.isArray(v) ? v.map(fNorm).map((x) => x.trim()).filter(Boolean).slice(0, 30) : []);
     const filt = { roles: list(srv && srv.roles), locations: list(srv && srv.locations) };
     if (filt.roles.length || filt.locations.length) await log("info", `Filters: ${filt.roles.length ? `roles ${filt.roles.join(", ")}` : "any role"}; ${filt.locations.length ? `locations ${filt.locations.join(", ")}` : "any location"}.`);
+    // v2.9: roles to search on boards whose recommended feed is empty: your role filter, else your profile headline.
+    const searchRoles = filt.roles.length ? filt.roles : (String(profile.headline || "").split(/[|,·•]/)[0].trim().slice(0, 50) ? [String(profile.headline).split(/[|,·•]/)[0].trim().slice(0, 50)] : []);
     const fitCheck = true; // v2.6: always check fit vs resume (default 35%)
     // deterministic ATS keyword score (/api/score): no AI call, no quota
     const tabId = await bTab();
@@ -590,7 +605,7 @@ async function boardLoop() {
       if (conn === false) { await log("warn", `${board.name}: not signed in. Sign in to ${board.name} in this Chrome; skipped today.`); continue; }
       const doneSet = new Set((st.done || []).map(urlKey));
       let col;
-      try { col = await bCollect(ctx, tabId, board, known, doneSet, filt); }
+      try { col = await bCollect(ctx, tabId, board, known, doneSet, filt, searchRoles); }
       catch (e) { if (e instanceof BoardSkip) { await log("warn", e.message); continue; } throw e; }
       // v2.7: share the board's recommended listings with the website (Recommended jobs page). Never stops the run.
       if (col.recs.length) {
@@ -620,7 +635,11 @@ async function boardLoop() {
           else if (e && e.noAccess) { stopMsg = `Chrome would not let ApplyPilot read ${board.name}. Reload the extension or allow site access.`; res = { outcome: "none", reason: stopMsg }; }
           else res = { outcome: jctx.submitClicked ? "review" : "skip", reason: `Unexpected error: ${String(e && e.message || e).slice(0, 160)}` };
         } finally { clearInterval(onStop); }
-        if (res.outcome === "unknown") { stopMsg = `${board.name}: ${res.reason} Stopped to be safe.`; res = { outcome: "review", reason: res.reason }; }
+        if (res.outcome === "unknown") {
+          // v2.9: on the newer best-effort boards an unknown page only sends this job to review; the run moves on.
+          if (!board.bestEffort) stopMsg = `${board.name}: ${res.reason} Stopped to be safe.`;
+          res = { outcome: "review", reason: res.reason };
+        }
 
         const p = { current: null, done: [...(st.done || []), job.url].slice(-500) };
         if (res.outcome === "applied") {

@@ -49,6 +49,13 @@ Side panel → **Auto** tab → **Auto-apply recommended jobs**. With Auto mode 
 ### Zero-click Auto-apply (v2.4)
 Dashboard → **Auto-apply**: install/connect the extension, see which boards you are signed in to (reported by the extension before each run and by a light check every ~6 h; LinkedIn is not supported), and set **run daily** on/off, run time (IST, default 09:00), per-board on + cap, overall daily cap and **min match %** (jobs whose ATS keyword match is below it are skipped and logged). Settings are stored in `profiles.auto_settings`, sign-in status in `profiles.board_status`. With Auto mode switched on once in the side panel, the extension (`chrome.alarms`) starts the board run at that time with no click while Chrome is open, and catches up the same day if Chrome opens later. **Run now** still works. Boards you are signed out of are skipped for that run. All v2.3 gates and caps still apply. The page also lists unanswered screening questions so you can answer them into the answer bank. API: `GET/PUT /api/auto/settings`, `POST /api/auto/board {action:"status"}`. Re-run `web/supabase/schema.sql` (or `migrations/zero_click.sql`).
 
+### More boards (v2.9)
+Board Auto-Apply now also runs on **Shine, Hirist, Instahyre, Cutshort and Wellfound** (order: Naukri → Internshala → Indeed → Shine → Hirist → Instahyre → Cutshort → Foundit → Wellfound). Each has its own on/off switch and daily cap on Dashboard → Auto-apply (default 10/day, on). Sign in to each board once in your Chrome.
+- If a board's recommended feed is empty or needs a different page, the runner **searches your roles** on that board instead (your Roles filter, else your profile headline), up to 3 roles.
+- These five are best-effort: their feeds and apply dialogs are client-rendered. If the runner cannot tell what a page is doing after Apply, that job goes to **Needs review** and the run moves on (on the original boards it still stops to be safe).
+- Short "what interests you / note to the hiring team" boxes (Wellfound, Cutshort) are written by the AI from your profile, like other short essays.
+- Same gates everywhere: caps, 25–75 s between applications, stop on CAPTCHA, sign-in wall or limit text, LinkedIn never.
+
 ### Security model
 - `profiles`: users can only `UPDATE (profile_json, preferences)`; insert/delete are revoked.
 - `subscriptions` (plan): readable by the owner, **writable only by the service role** (server + signed Razorpay webhook).

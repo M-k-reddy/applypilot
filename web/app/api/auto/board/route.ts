@@ -3,7 +3,7 @@ import { askJSON } from "@/lib/llm";
 import { promptProfile, profileText } from "@/lib/profile";
 import { assertQuota, recordUsage } from "@/lib/quota";
 import { requireProfile, loadProfile, str, httpUrl, capWords, inventedNumbers } from "@/lib/server";
-import { normalizeAutoSettings, normalizeBoardStatus } from "@/lib/autosettings";
+import { normalizeAutoSettings, normalizeBoardStatus, AUTO_BOARDS } from "@/lib/autosettings";
 import { atsScore } from "@/lib/ats";
 
 export const dynamic = "force-dynamic";
@@ -11,7 +11,7 @@ export const maxDuration = 60;
 export const OPTIONS = preflight;
 
 // Board Auto-Apply (extension v2.3, boardrunner.js). API key or dashboard JWT.
-const BOARDS = ["naukri", "internshala", "indeed", "foundit"];
+const BOARDS: string[] = [...AUTO_BOARDS];
 const STATUSES = ["saved", "needs_review", "applied"];
 const normKey = (s: string) => String(s || "").toLowerCase().replace(/[^a-z0-9]/g, "");
 // Same key as boardrunner.js urlKey (host + path, Indeed ?jk= kept) so tracker dedupe matches the extension.

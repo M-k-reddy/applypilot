@@ -4,9 +4,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useApp, useBusy } from "@/components/AppContext";
 import { PageHead, Spinner } from "@/components/ui";
 import { AUTO_PRESETS, applyPatch, describePlan, type AutoPreset } from "@/lib/autoPresets";
-import type { AutoSettings } from "@/lib/autosettings";
+import { AUTO_BOARDS, type AutoSettings, type BoardId } from "@/lib/autosettings";
 
-type BoardId = "naukri" | "internshala" | "indeed" | "foundit";
 type Settings = AutoSettings;
 type Msg = { who: "me" | "bot"; text: string; chips?: boolean };
 type Status = Record<string, { connected: boolean | null; checked_at: string }>;
@@ -16,7 +15,12 @@ const BOARDS: { id: BoardId | "linkedin"; name: string; login: string }[] = [
   { id: "naukri", name: "Naukri", login: "https://www.naukri.com/nlogin/login" },
   { id: "internshala", name: "Internshala", login: "https://internshala.com/login/user" },
   { id: "indeed", name: "Indeed India", login: "https://secure.indeed.com/auth?hl=en_IN&co=IN" },
+  { id: "shine", name: "Shine", login: "https://www.shine.com/myshine/login" },
+  { id: "hirist", name: "Hirist", login: "https://www.hirist.tech/login" },
+  { id: "instahyre", name: "Instahyre", login: "https://www.instahyre.com/login/" },
+  { id: "cutshort", name: "Cutshort", login: "https://cutshort.io/login" },
   { id: "foundit", name: "Foundit", login: "https://www.foundit.in/rio/login" },
+  { id: "wellfound", name: "Wellfound", login: "https://wellfound.com/login" },
   { id: "linkedin", name: "LinkedIn", login: "" }
 ];
 const fmt = (d: string) => (d ? new Date(d).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "medium", timeStyle: "short" }) : "");
@@ -134,7 +138,7 @@ export default function AutoApplyPage() {
             <label className="field" style={{ flex: 1 }}><span>Roles / keywords (comma-separated, empty = all)</span><input className="input" value={s.roles.join(", ")} onChange={(e) => setS({ ...s, roles: e.target.value.split(",").map((x) => x.trimStart()) })} placeholder="python, data analyst" /></label>
             <label className="field" style={{ flex: 1 }}><span>Locations (comma-separated, empty = any)</span><input className="input" value={s.locations.join(", ")} onChange={(e) => setS({ ...s, locations: e.target.value.split(",").map((x) => x.trimStart()) })} placeholder="hyderabad, remote" /></label>
           </div>
-          {(["naukri", "internshala", "indeed", "foundit"] as BoardId[]).map((id) => (
+          {AUTO_BOARDS.map((id) => (
             <div key={id} className="row between">
               <label className="row"><input type="checkbox" checked={s.boards[id].on} onChange={(e) => setBoard(id, { on: e.target.checked })} /> {BOARDS.find((b) => b.id === id)!.name}</label>
               <label className="row small">Cap/day <input className="input" type="number" min={1} max={100} value={s.boards[id].cap} onChange={(e) => setBoard(id, { cap: Number(e.target.value) })} style={{ width: 90 }} /></label>

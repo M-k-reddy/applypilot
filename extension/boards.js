@@ -1,4 +1,4 @@
-// ApplyPilot Board Auto-Apply: one config object per supported Indian job board.
+// ApplyPilot Board Auto-Apply: one config object per supported job board (v2.9: + Shine, Hirist, Instahyre, Cutshort, Wellfound).
 // Loaded in BOTH the service worker (importScripts) and the page (chrome.scripting files), so keep it plain data plus
 // tiny pure functions. Boards change their markup often: every selector list is tried in order, and every list has a
 // text-based fallback ("Apply", "Easily apply", "Applied"), so one stale selector never breaks a board on its own.
@@ -16,6 +16,7 @@
 (function (g) {
   const APPLIED_EXACT = /^(already applied|applied|you applied|applied on .{1,30}|application sent|applied \d+ \w+ ago)$/i;
   const COMMON_RATE = /too many (applications|requests|attempts)|(daily|application|apply) limit (reached|exceeded)|you have reached (the|your) (maximum|daily|limit)|exceeded (the|your) (daily )?limit|please try again (later|after)|unusual (activity|traffic)|are you a robot|verify (that )?you are (a )?human|access denied|temporarily blocked|request (has been )?blocked/i;
+  const slug = (r) => encodeURIComponent(String(r || "").toLowerCase().trim().replace(/[^a-z0-9+#]+/g, "-").replace(/^-+|-+$/g, ""));
   const COMMON_SUCCESS = /(you have successfully applied|successfully applied|applied successfully|application (has been |was )?(successfully )?(submitted|sent|received)|your application has been (successfully )?(submitted|sent)|you('|’)ve applied|you have applied|thank(s| you) for applying)/i;
 
   const BOARDS = {
@@ -148,6 +149,206 @@
       rate: COMMON_RATE
     },
 
+    // v2.9: more Indian/startup boards. Grounded 2026-11-09 on public pages: Shine (result-card_* cards, /jobs/<role>/<co>/<id>,
+    // job page role-overview-card_applyBtn "Apply Now"), Hirist (/j/<slug>-<id>, /k/<skill>-jobs search), Instahyre (/job-<id>-<slug>,
+    // /<skill>-jobs/ search, "Apply now"), Cutshort (/job/<slug>-<id>, "Apply to this job"), Wellfound (/jobs/<id>-<slug>, /role/<role>,
+    // "Apply"). Logged-in feeds and the apply dialogs are client-rendered, so those parts are best-effort with text fallbacks.
+    // Every new board also has search(role): when its recommended feed gives nothing, the runner searches your roles there.
+    shine: {
+      id: "shine", bestEffort: true, name: "Shine", defaultCap: 10, defaultOn: true,
+      hosts: /(^|\.)shine\.com$/i,
+      recommended: ["https://www.shine.com/myshine/mydashboard/"],
+      search: (r) => `https://www.shine.com/job-search/${slug(r)}-jobs`,
+      loginUrl: /\/myshine\/login|\/(login|registration)\b/i,
+      listing: {
+        card: ["article[class*='result-card_card']:not([class*='placeholder'])", "[class*='jobCard']", "[class*='JobCard']"],
+        link: ["a[class*='result-card_hit']", "h3 a[href*='/jobs/']", "a[href*='/jobs/']"],
+        linkPattern: /\/jobs\/[^/?#]+\/[^/?#]+\/\d+/i,
+        title: ["[class*='result-card_role']", "h3", "h2"],
+        company: ["[class*='result-card_company']", "[class*='result-card_co']", "[class*='company']"],
+        tabs: null,
+        next: ["a[rel='next']", "[class*='pagination'] a[aria-label*='Next']"],
+        nextText: /^next$/i,
+        require: null
+      },
+      job: {
+        title: ["[class*='role-overview-card_title']", "h1"],
+        company: ["[class*='role-overview-card_companyName']", "[class*='companyName']"],
+        description: ["[class*='collapsible-jd-body_body']", "[class*='job-description-page_section']", "[class*='jobDescription']", "main"],
+        applied: ["[class*='appliedBtn']", "[class*='applied_btn']"],
+        applySel: ["[class*='role-overview-card_applyBtn']", "button[data-apply-trigger]"],
+        applyText: /^(apply|apply now)$/i,
+        externalSel: [],
+        externalText: /apply on company (site|website)|company site/i
+      },
+      apply: {
+        hosts: /(^|\.)shine\.com$/i,
+        containers: ["[role='dialog']", "[class*='modal']", "[class*='Modal']", "[class*='drawer']", "[class*='Drawer']"],
+        chat: null,
+        nextText: /^(next|continue|proceed|save and continue|save & continue)$/i,
+        submitText: /^(submit|apply|apply now|submit application|confirm|confirm & apply|confirm and apply)$/i,
+        errorSel: ["[class*='error']:not(:empty)", "[role='alert']"],
+        success: COMMON_SUCCESS
+      },
+      rate: COMMON_RATE
+    },
+
+    hirist: {
+      id: "hirist", bestEffort: true, name: "Hirist", defaultCap: 10, defaultOn: true,
+      hosts: /(^|\.)hirist\.(tech|com)$/i,
+      recommended: ["https://www.hirist.tech/jobfeed"],
+      search: (r) => `https://www.hirist.tech/k/${slug(r)}-jobs`,
+      loginUrl: /\/(login|signin|register|signup)\b/i,
+      listing: {
+        card: ["[class*='job-card']", "[class*='jobCard']", "[class*='JobCard']", "[data-testid*='job-card']"],
+        link: ["a[href*='/j/']"],
+        linkPattern: /\/j\/[a-z0-9-]+-\d+/i,
+        title: ["[class*='job-title']", "[class*='jobTitle']", "h2", "h3", "a[href*='/j/']"],
+        company: ["[class*='company-name']", "[class*='companyName']", "[class*='company']"],
+        tabs: null,
+        next: ["a[rel='next']"],
+        nextText: /^(next|load more)$/i,
+        require: null
+      },
+      job: {
+        title: ["h1"],
+        company: ["[class*='company-name']", "[class*='companyName']", "[class*='recruiter'] a"],
+        description: ["[class*='job-description']", "[class*='jobDescription']", "[class*='JobDescription']", "main"],
+        applied: ["[class*='applied']"],
+        applySel: ["button[class*='apply' i]", "[class*='apply-btn']", "[class*='applyBtn']"],
+        applyText: /^(apply|apply now|easy apply)$/i,
+        externalSel: [],
+        externalText: /apply on company (site|website)|company site/i
+      },
+      apply: {
+        hosts: /(^|\.)hirist\.(tech|com)$/i,
+        containers: ["[role='dialog']", "[class*='modal']", "[class*='Modal']", "[class*='drawer']"],
+        chat: null,
+        nextText: /^(next|continue|proceed|save and continue)$/i,
+        submitText: /^(submit|apply|apply now|send application|confirm)$/i,
+        errorSel: ["[class*='error']:not(:empty)", "[role='alert']"],
+        success: COMMON_SUCCESS
+      },
+      rate: COMMON_RATE
+    },
+
+    instahyre: {
+      id: "instahyre", bestEffort: true, name: "Instahyre", defaultCap: 10, defaultOn: true,
+      hosts: /(^|\.)instahyre\.com$/i,
+      recommended: ["https://www.instahyre.com/candidate/opportunities/?matching=true"],
+      search: (r) => `https://www.instahyre.com/${slug(r)}-jobs/`,
+      loginUrl: /\/(login|signup)\b/i,
+      listing: {
+        card: ["[id^='employer-']", "[class*='employer-row']", "[class*='opportunity-row']", ".employer-block"],
+        link: ["a[href*='/job-']"],
+        linkPattern: /\/job-\d+-/i,
+        title: ["[class*='job-title']", "[class*='candidate_title']", "h2", "h3", "a[href*='/job-']"],
+        company: ["[class*='company-name']", "[class*='companyName']", "[class*='company']"],
+        tabs: null,
+        next: ["a[rel='next']", ".pagination .next a"],
+        nextText: /^(next|show more|load more)$/i,
+        require: null
+      },
+      job: {
+        title: ["h1"],
+        company: ["h2", "[class*='company-name']"],
+        description: ["[class*='job-description']", "#job-description", ".job-details", "main"],
+        applied: ["[class*='applied']"],
+        applySel: ["#apply-button", "button[class*='apply' i]", "[class*='apply-btn']"],
+        applyText: /^(apply|apply now|interested|i('|’)m interested)$/i,
+        externalSel: [],
+        externalText: /apply on company (site|website)|company site/i
+      },
+      apply: {
+        hosts: /(^|\.)instahyre\.com$/i,
+        containers: ["[role='dialog']", ".modal.in .modal-content", ".modal.show .modal-content", "[class*='modal']"],
+        chat: null,
+        nextText: /^(next|continue|proceed)$/i,
+        submitText: /^(apply|submit|confirm|send|send application)$/i,
+        errorSel: [".error:not(:empty)", "[class*='error']:not(:empty)"],
+        success: COMMON_SUCCESS
+      },
+      rate: COMMON_RATE
+    },
+
+    cutshort: {
+      id: "cutshort", bestEffort: true, name: "Cutshort", defaultCap: 10, defaultOn: true,
+      hosts: /(^|\.)cutshort\.io$/i,
+      recommended: ["https://cutshort.io/jobs/recommended"],
+      search: (r) => `https://cutshort.io/jobs/${slug(r)}-jobs`,
+      loginUrl: /\/(login|signin|signup)\b/i,
+      listing: {
+        card: ["[class*='JobCard']", "[class*='job-card']", "[class*='jobCard']"],
+        link: ["a[href*='/job/']"],
+        linkPattern: /\/job\/[A-Za-z0-9-]+-[A-Za-z0-9]{6,}(\?|$)/,
+        title: ["h2 a[href*='/job/']", "h3 a[href*='/job/']", "h2", "h3"],
+        company: ["a[href*='/company/']", "[class*='company']"],
+        tabs: null,
+        next: ["a[rel='next']"],
+        nextText: /^(next|load more|show more)$/i,
+        require: null
+      },
+      job: {
+        title: ["h1"],
+        company: ["a[href*='/company/']"],
+        description: ["[class*='description']", "[class*='Description']", "main"],
+        applied: ["[class*='applied']"],
+        applySel: ["button[label='Apply to this job']"],
+        applyText: /^(apply|apply now|apply to this job)$/i,
+        externalSel: [],
+        externalText: /apply on company (site|website)|company site/i
+      },
+      apply: {
+        hosts: /(^|\.)cutshort\.io$/i,
+        containers: ["[role='dialog']", "[class*='modal']", "[class*='Modal']", "[class*='drawer']"],
+        chat: null,
+        nextText: /^(next|continue|proceed)$/i,
+        submitText: /^(apply|apply now|submit|submit application|send application|confirm)$/i,
+        errorSel: ["[class*='error']:not(:empty)", "[role='alert']"],
+        success: COMMON_SUCCESS
+      },
+      rate: COMMON_RATE
+    },
+
+    wellfound: {
+      id: "wellfound", bestEffort: true, name: "Wellfound", defaultCap: 10, defaultOn: true,
+      hosts: /(^|\.)wellfound\.com$/i,
+      recommended: ["https://wellfound.com/jobs"],
+      search: (r) => `https://wellfound.com/role/${slug(r)}`,
+      loginUrl: /\/(login|signup|join)\b/i,
+      listing: {
+        card: [],
+        link: ["a[href*='/jobs/']"],
+        linkPattern: /\/jobs\/\d+-/i,
+        title: ["a[href*='/jobs/'] span", "a[href*='/jobs/']", "h3", "h2"],
+        company: ["a[href*='/company/'] span", "a[href*='/company/'] h2", "h2"],
+        tabs: null,
+        next: [],
+        nextText: /^(next|load more|show more)$/i,
+        require: null
+      },
+      job: {
+        title: ["h1"],
+        company: ["[data-test='JobListingCompanyHeader'] a[href*='/company/'] span", "a[href*='/company/'] span"],
+        description: ["#job-description", "[class*='description']", "main"],
+        applied: ["[class*='applied']"],
+        applySel: [],
+        applyText: /^(apply|apply now)$/i,
+        externalSel: [],
+        externalText: /apply on company (site|website)|company site|apply externally/i
+      },
+      apply: {
+        hosts: /(^|\.)wellfound\.com$/i,
+        containers: ["[role='dialog']", "[class*='modal']", "[class*='Modal']"],
+        chat: null,
+        nextText: /^(next|continue)$/i,
+        submitText: /^(send application|submit application|apply|submit)$/i,
+        errorSel: ["[class*='error']:not(:empty)", "[role='alert']"],
+        success: COMMON_SUCCESS
+      },
+      rate: COMMON_RATE
+    },
+
     foundit: {
       id: "foundit", name: "Foundit", defaultCap: 15, defaultOn: false,
       hosts: /(^|\.)foundit\.in$/i,
@@ -187,5 +388,5 @@
     }
   };
 
-  g.AP_BOARDS = { BOARDS, ORDER: ["naukri", "internshala", "indeed", "foundit"], APPLIED_EXACT, EXCLUDED: /(^|\.)linkedin\.com$/i };
+  g.AP_BOARDS = { BOARDS, ORDER: ["naukri", "internshala", "indeed", "shine", "hirist", "instahyre", "cutshort", "foundit", "wellfound"], APPLIED_EXACT, EXCLUDED: /(^|\.)linkedin\.com$/i };
 })(typeof self !== "undefined" ? self : globalThis);
