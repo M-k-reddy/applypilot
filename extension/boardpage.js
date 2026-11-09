@@ -136,7 +136,10 @@
     const descEl = q1(J.description);
     const description = descEl ? (descEl.innerText || "").slice(0, 12000) : "";
     const pageTop = (document.body && document.body.innerText || "").slice(0, 4000); // v2.8: salary/stipend line sits in the header
-    const appliedBtn = clickables().some((b) => APPLIED_EXACT.test(btnLabel(b)));
+    // v2.9.1: an "Applied" nav link or tab (Wellfound's Jobs › Applied, profile menus) is not this job's status.
+    const navLike = (b) => !!b.closest("nav, header, footer, aside, [role=navigation], [role=tablist], [role=menu], [class*='sidebar' i], [class*='navbar' i]")
+      || (b.tagName === "A" && /^(https?:|\/)/i.test(b.getAttribute("href") || ""));
+    const appliedBtn = clickables().some((b) => APPLIED_EXACT.test(btnLabel(b)) && !navLike(b));
     const applied = !!q1(J.applied) || appliedBtn;
     const { on, ext } = applyButtons(c);
     let kind = "none", href = "", label = "";
