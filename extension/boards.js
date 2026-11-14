@@ -110,6 +110,12 @@
       id: "indeed", name: "Indeed India", defaultCap: 15, defaultOn: true,
       hosts: /^(in\.indeed\.com|smartapply\.indeed\.com|apply\.indeed\.com|m5\.apply\.indeed\.com)$/i,
       recommended: ["https://in.indeed.com/"],
+      // v2.10.1: role search with the "Easily apply" filter is the primary source (far more Indeed Apply jobs than the
+      // homepage feed); the homepage feed is the fallback. Stop Indeed for the run after 5 same-reason skips in a row.
+      search: (r) => `https://in.indeed.com/jobs?q=${encodeURIComponent(r)}&l=India&fromage=14&sc=0kf%3Aattr(DSQF7)%3B`,
+      searchFirst: true,
+      skipStreakStop: 5,
+      followApply: true, // after Apply, wait for navigation / a new tab to smartapply.indeed.com or apply.indeed.com
       loginUrl: /(secure\.indeed\.com|\/account\/login|\/auth\b)/i,
       listing: {
         card: ["[data-testid='slider_item']", ".job_seen_beacon", ".cardOutline", "li div[data-jk]", "[data-jk]"],
@@ -124,7 +130,8 @@
         nextText: /^next$/i,
         // Only "Easily apply" (Indeed Apply) cards are eligible.
         require: /easily apply|indeed apply/i,
-        requireSel: ["[data-testid='indeedApply']", ".iaLabel", ".ialbl"]
+        requireSel: ["[data-testid='indeedApply']", "[data-testid*='indeedApply']", ".iaLabel", ".ialbl", "[class*='iaIcon']", "[class*='indeedApply' i]"],
+        requireStrict: true // v2.10.1: the marker must sit in this job's own card (not a neighbour / page header)
       },
       job: {
         title: ["[data-testid='jobsearch-JobInfoHeader-title']", "h1.jobsearch-JobInfoHeader-title", "h1"],
@@ -135,7 +142,13 @@
         applyText: /^(apply now|easily apply)$/i,
         applyRequiresSel: ["#indeedApplyButton", "[id*='indeedApply']", "[data-testid*='indeedApply']", "[class*='IndeedApply']", ".ia-IndeedApplyButton", "[data-indeed-apply-jobid]"],
         externalSel: ["#applyButtonLinkContainer a", "[data-testid='applyButton-externalLink']"],
-        externalText: /apply on company (site|website)|company site/i
+        externalText: /apply on company (site|website)|company site/i,
+        // v2.10.1: Indeed's current design: a plain "Apply now" in the view-job buttons area is Indeed Apply unless an
+        // external marker sits in that same area.
+        buttonsArea: ["#jobsearch-ViewJobButtons-container", "[class*='ViewJobButtons']", "[data-testid*='ViewJobButtons']", "#viewJobButtonLinkContainer", ".jobsearch-IndeedApplyButton-contentWrapper"],
+        areaApplyText: /^(apply now|easily apply|apply)$/i,
+        ownHosts: /(^|\.)indeed\.com$/i,
+        redirectPath: /\/(applystart|rc\/clk|pagead\/clk)/i
       },
       apply: {
         hosts: /^(in\.indeed\.com|smartapply\.indeed\.com|apply\.indeed\.com|m5\.apply\.indeed\.com)$/i,

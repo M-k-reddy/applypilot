@@ -174,6 +174,24 @@ async function trackerLog(board, job, status, note) {
   }
 }
 const jLabel = (j) => [j.company, j.title].filter(Boolean).join(" · ") || j.url;
+// v2.10.1: short skip reason first, so Recent reads without hovering: "Indeed India: skipped (company site) — Title · Company. <full reason>"
+function bShort(res) {
+  const r = String(res.reason || "");
+  if (/company site|external site|Apply (link goes|opened|went) to/i.test(r)) return "company site";
+  if (/expired or closed/i.test(r)) return "expired";
+  if (/No on-board Apply/i.test(r)) return "no Easily apply";
+  if (/Already applied/i.test(r)) return "already applied";
+  if (/^Match \d+%/i.test(r)) return "low match";
+  if (/senior role/i.test(r)) return "senior role";
+  if (/Asks for \d+\+ years/i.test(r)) return "years";
+  if (/minimum is .* LPA/i.test(r)) return "pay";
+  if (/button disappeared/i.test(r)) return "button gone";
+  if (/Could not read/i.test(r)) return "page unreadable";
+  if (/Unexpected error/i.test(r)) return "error";
+  if (/time limit/i.test(r)) return "time limit";
+  return r.split(/[.:;(]/)[0].trim().toLowerCase().slice(0, 30) || "other";
+}
+const skipLine = (board, j, res) => `${board.name}: skipped (${bShort(res)}) — ${[j.title, j.company].filter(Boolean).join(" · ") || j.url}. ${res.reason}`;
 
 // ───────── answering screening questions (profile + answer bank; LLM only for short "why you" essays)
 const qk = (q) => String(q || "").toLowerCase().replace(/\*/g, "").replace(/[^a-z0-9]+/g, " ").trim();
@@ -325,7 +343,7 @@ async function bApplyJob(ctx, tabId, board, job, profile, opts) {
     if (info.href && GH_LEVER.test(h)) return { outcome: "queue", reason: `Apply link goes to ${h}`, href: info.href };
     return { outcome: "skip", reason: `Apply happens on the company site${h ? ` (${h})` : ""}; skipped.` };
   }
-  if (info.kind !== "onboard") return { outcome: "skip", reason: "No on-board Apply button (closed, expired or external)." };
+  if (info.kind !== "onboard") return { outcome: "skip", reason: info.expired ? "Job expired or closed." : "No on-board Apply button (closed, expired or external)." };
 
   // v2.6: agent checks. Read the job like a person would before applying: seniority, years asked, then fit vs your resume.
   const verdict = bJudge(info, job, profile, opts.minLpa || 0);
@@ -346,9 +364,31 @@ async function bApplyJob(ctx, tabId, board, job, profile, opts) {
   if (!click || !click.clicked) return { outcome: "skip", reason: "Apply button disappeared." };
   ctx.clicked = true;
   await bSettle(ctx, tabId, 2000);
-  const spawned = (await chrome.tabs.query({})).filter((t) => !before.has(t.id) && t.openerTabId === tabId);
+  // v2.10.1: Indeed Apply can open smartapply/apply.indeed.com in the same tab or a new tab, a few seconds after the click.
+  // Wait (up to ~10s) for either before deciding; new tabs on the board's apply hosts count even without an opener id.
+  const fromHost = hostOf(info.url || "");
+  const newTabs = async () => (await chrome.tabs.query({})).filter((t) => {
+    if (before.has(t.id)) return false;
+    if (t.openerTabId === tabId) return true;
+    const h = hostOf(t.pendingUrl || t.url || "");
+    return !!board.followApply && !!h && h !== fromHost && board.apply.hosts.test(h);
+  });
+  if (board.followApply) {
+    const startUrl = noHash(info.url || "");
+    for (let w = 0; w < 10; w++) {
+      if ((await newTabs()).length) { await wait(ctx, 1200); break; }
+      const u = (await chrome.tabs.get(tabId)).url || "";
+      if (noHash(u) !== startUrl) { await bWaitLoad(ctx, tabId, 15_000); break; }
+      await wait(ctx, 1000);
+    }
+  }
+  const spawned = await newTabs();
   for (const t of spawned) {
-    const u = t.pendingUrl || t.url || "";
+    let u = t.pendingUrl || t.url || "";
+    for (let k = 0; k < 10 && (!u || /^about:/i.test(u)); k++) { // v2.10.1: a new tab can start blank before it navigates
+      await wait(ctx, 500);
+      try { const tt = await chrome.tabs.get(t.id); u = tt.pendingUrl || tt.url || ""; } catch { break; }
+    }
     try { await chrome.tabs.remove(t.id); } catch { /* gone */ }
     const h = hostOf(u);
     if (BCFG.EXCLUDED.test(h)) return { outcome: "review", reason: "Apply opened LinkedIn, which is never automated." };
@@ -534,11 +574,27 @@ async function bCollect(ctx, tabId, board, known, doneSet, filt = { roles: [], l
       await bCheck(ctx, tabId, board, "next page");
     }
   };
+  const searchAll = async () => {
+    for (const role of searchRoles.slice(0, 3)) {
+      if (cands.length >= B_MAX_CANDIDATES) break;
+      await bGo(ctx, tabId, board.search(role), board);
+      await bCheck(ctx, tabId, board, `search "${role}"`);
+      await harvest();
+    }
+  };
+  // v2.10.1: boards with searchFirst (Indeed) search your roles first; the recommended feed is only the fallback.
+  const searchFirst = !!(board.searchFirst && board.search && searchRoles.length);
+  if (searchFirst) {
+    await searchAll();
+    if (cands.length) return { cands, recs, skippedApplied, skippedKnown, ineligible, offFilter };
+    await log("info", `${board.name}: role search gave nothing to try; checking the homepage feed.`);
+  }
   for (const url of board.recommended) {
     await bGo(ctx, tabId, url, board);
     await bCheck(ctx, tabId, board, "recommended page");
     const landed = (await chrome.tabs.get(tabId)).url;
     if (!board.hosts.test(hostOf(landed))) {
+      if (searchFirst) break;
       if (board.search && searchRoles.length) { await log("info", `${board.name}: no recommended feed; searching your roles instead.`); break; }
       throw new BoardSkip(`${board.name} redirected away from its recommended page.`);
     }
@@ -554,14 +610,7 @@ async function bCollect(ctx, tabId, board, known, doneSet, filt = { roles: [], l
     }
   }
   // v2.9: boards with search(role) fall back to searching your roles when the recommended feed gave nothing to try.
-  if (!cands.length && board.search && searchRoles.length) {
-    for (const role of searchRoles.slice(0, 3)) {
-      if (cands.length >= B_MAX_CANDIDATES) break;
-      await bGo(ctx, tabId, board.search(role), board);
-      await bCheck(ctx, tabId, board, `search "${role}"`);
-      await harvest();
-    }
-  }
+  if (!cands.length && !searchFirst && board.search && searchRoles.length) await searchAll();
   return { cands, recs, skippedApplied, skippedKnown, ineligible, offFilter };
 }
 
@@ -627,6 +676,7 @@ async function boardLoop() {
       if (board.ats) await log(col.cands.length ? "ok" : "info", col.summary);
       else await log(col.cands.length ? "ok" : "info", `${board.name}: ${col.cands.length} recommended job${col.cands.length === 1 ? "" : "s"} to try (${col.skippedApplied} already applied on ${board.name}, ${col.skippedKnown} already in your tracker${col.ineligible ? `, ${col.ineligible} without on-board apply` : ""}${col.offFilter ? `, ${col.offFilter} outside your roles/locations` : ""}).`);
 
+      let streak = 0, streakReason = "";
       for (const job of col.cands) {
         st = await bGet(); if (!st.running) return;
         daily = await getDaily();
@@ -672,8 +722,13 @@ async function boardLoop() {
         } else if (res.outcome === "skip") {
           p.skipped = st.skipped + 1;
           if (res.lowMatch) p.lowMatch = (st.lowMatch || 0) + 1;
-          await log("info", `${board.name}: skipped ${jLabel(job)}: ${res.reason}`);
+          await log("info", skipLine(board, job, res));
         }
+        // v2.10.1: N skips in a row for the same reason (Indeed: 5) → stop this board for the run instead of looping.
+        if (res.outcome === "skip") { const r = bShort(res); streak = r === streakReason ? streak + 1 : 1; streakReason = r; }
+        else { streak = 0; streakReason = ""; }
+        if (board.skipStreakStop && streak >= board.skipStreakStop && !stopMsg && !haltMsg)
+          haltMsg = `${board.name}: stopped for this run: ${streak} jobs in a row skipped (${streakReason}).`;
         const attempted = jctx.clicked;
         await bPatch(p);
         if (stopMsg) return bStop(stopMsg);
@@ -992,7 +1047,7 @@ async function portalApply(boardId, job) {
     } else if (res.outcome === "queue") {
       await trackerLog(board, { ...j, url: res.href }, "saved", `${board.name}: on-board apply not available; added to the Auto queue (${hostOf(res.href)}).`);
       await log("info", `${board.name}: ${jLabel(j)} applies on ${hostOf(res.href)}; added to your Auto queue as Saved.`);
-    } else await log("info", `${board.name}: skipped ${jLabel(j)}: ${res.reason}`);
+    } else await log("info", skipLine(board, j, res));
   } catch (e) { await log("error", `${board.name}: could not update the tracker: ${(e && e.message) || e}`); }
   return { ok: true, outcome: res.outcome, reason: res.reason };
 }

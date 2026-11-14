@@ -64,6 +64,15 @@
   }
   const exactApplied = (root) => { try { return [...root.querySelectorAll("span, div, p, button, a, label, i, b, strong")].some((e) => e.childElementCount <= 1 && APPLIED_EXACT.test(txt(e, 60)) && vis(e)); } catch { return false; } };
 
+  function jobCount(L, el) {
+    const ids = new Set();
+    try {
+      if (L.jkAttr) { if (el.matches(`[${L.jkAttr}]`)) ids.add(el.getAttribute(L.jkAttr)); el.querySelectorAll(`[${L.jkAttr}]`).forEach((e) => ids.add(e.getAttribute(L.jkAttr))); }
+      if (!ids.size && L.linkPattern) el.querySelectorAll("a[href]").forEach((a) => { const h = a.getAttribute("href") || ""; if (L.linkPattern.test(h)) ids.add(h.split("#")[0]); });
+    } catch { /* ignore */ }
+    ids.delete(null); ids.delete("");
+    return ids.size;
+  }
   function listJobs(id) {
     const c = cfg(id); if (!c) return { jobs: [] };
     const L = c.listing;
@@ -83,7 +92,14 @@
       const url = cardUrl(c, card); if (!url) continue;
       const title = txt(q1(L.title, card, false), 200);
       const company = txt(q1(L.company, card, false), 160);
-      const eligible = !L.require || L.require.test(txt(card, 3000)) || !!q1(L.requireSel || [], card, false);
+      let scope = card;
+      if (L.requireStrict) {
+        // v2.10.1: read the marker only from this job's own card: climb to the widest wrapper that still holds one job,
+        // and never trust a "card" that holds several jobs (homepage feed fallback) or the page header.
+        if (jobCount(L, card) > 1) scope = null;
+        else for (let i = 0; i < 6; i++) { const p = scope.parentElement; if (!p || p === document.body || jobCount(L, p) > 1) break; scope = p; }
+      }
+      const eligible = !L.require || (!!scope && (L.require.test(txt(scope, 3000)) || !!q1(L.requireSel || [], scope, false)));
       jobs.push({ url, title, company, applied: exactApplied(card), eligible, text: txt(card, 800) });
     }
     return { jobs, url: location.href };
@@ -117,8 +133,42 @@
   function clickNext(id) { const c = cfg(id); const el = c && (q1(c.listing.next) || byText(c.listing.nextText)); if (!el) return false; el.click(); return true; }
 
   // ───────── job page
+  // v2.10.1: is this button/link an external (company site) apply? href off the board, an on-board redirect path
+  // (Indeed /applystart, /rc/clk), "company site" text, or a "opens in a new tab" link that leaves the board.
+  function extMark(J, el) {
+    const lab = `${btnLabel(el)} ${el.getAttribute("aria-label") || ""}`;
+    if (J.externalText && J.externalText.test(lab)) return true;
+    const a = el.tagName === "A" ? el : el.closest("a[href]");
+    const raw = (a && a.getAttribute("href")) || el.getAttribute("data-href") || el.getAttribute("href") || "";
+    if (!raw || /^(#|javascript:)/i.test(raw)) return false;
+    let u; try { u = new URL(raw, location.href); } catch { return false; }
+    if (J.ownHosts && !J.ownHosts.test(u.hostname)) return true;
+    if (J.redirectPath && J.redirectPath.test(u.pathname)) return true;
+    if (/opens in a new (tab|window)/i.test(lab) && J.ownHosts && !J.ownHosts.test(u.hostname)) return true;
+    return false;
+  }
+  function areaButtons(J) {
+    let areas = [];
+    for (const s of J.buttonsArea) { try { areas.push(...[...document.querySelectorAll(s)].filter(vis)); } catch { /* bad selector */ } }
+    areas = areas.filter((x) => !areas.some((y) => y !== x && y.contains(x))); // outermost only
+    if (!areas.length) return null;
+    const all = areas.flatMap((a) => clickables(a));
+    const ext = all.find((b) => extMark(J, b)) || areas.map((a) => q1(J.externalSel || [], a)).find(Boolean) || null;
+    const rank = (b) => (b.tagName === "BUTTON" ? 0 : b.getAttribute("role") === "button" ? 1 : b.tagName === "A" ? 2 : 3);
+    const on = all.filter((b) => J.areaApplyText.test(btnLabel(b)) && !disabled(b) && !extMark(J, b) && !APPLIED_EXACT.test(btnLabel(b)))
+      .sort((a, b) => rank(a) - rank(b))[0] || null;
+    return { on, ext };
+  }
   function applyButtons(c) {
     const J = c.job;
+    if (J.buttonsArea) {
+      const ab = areaButtons(J);
+      if (ab) {
+        const iaMarker = J.applyRequiresSel && J.applyRequiresSel.length && !!q1(J.applyRequiresSel, document, false);
+        if (ab.on && !ab.ext) return { on: ab.on, ext: null };
+        if (ab.ext && !iaMarker) return { on: null, ext: ab.ext };
+      }
+    }
     const ext = q1(J.externalSel) || byText(J.externalText);
     let on = qa(J.applySel).find((b) => !disabled(b) && !(J.externalText && J.externalText.test(btnLabel(b))) && !APPLIED_EXACT.test(btnLabel(b)))
       || byText(J.applyText);
@@ -150,7 +200,8 @@
       const a = ext.tagName === "A" ? ext : ext.closest("a");
       href = a && a.getAttribute("href") ? abs(a.getAttribute("href")) : (ext.getAttribute("data-href") || ext.getAttribute("href") || "");
     }
-    return { title, company, description, pageTop, applied, kind, href, label, url: location.href };
+    const expired = kind === "none" && /this job has expired|no longer accepting applications|job (is|has been) (closed|removed)|job not found|this job is no longer available/i.test(bodyText(8000));
+    return { title, company, description, pageTop, applied, kind, href, label, expired, url: location.href };
   }
   function clickApply(id) {
     const c = cfg(id); if (!c) return { clicked: false };
