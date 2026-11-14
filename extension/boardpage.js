@@ -48,6 +48,7 @@
       login: loginUrl || pw || loginBtns > 0 || /please (log ?in|sign ?in) to (continue|apply)|login to apply|sign in to apply/i.test(t.slice(0, 8000)),
       rateLimit: c.rate ? c.rate.test(t.slice(0, 15000)) : false,
       rateText: c.rate ? ((t.match(c.rate) || [])[0] || "") : "",
+      otp: (globalThis.AP_BOARDS && globalThis.AP_BOARDS.OTP ? globalThis.AP_BOARDS.OTP.test(t.slice(0, 15000)) : false) || [...document.querySelectorAll("input[autocomplete='one-time-code']")].some(vis),
       success: c.apply && c.apply.success ? c.apply.success.test(t) : false,
       textLen: t.length
     };

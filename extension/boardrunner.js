@@ -12,7 +12,7 @@
 "use strict";
 
 const BCFG = self.AP_BOARDS;
-const B_DELAY_MIN = 25_000, B_DELAY_MAX = 75_000;
+const B_DELAY_MIN = 30_000, B_DELAY_MAX = 90_000; // v2.10 anti-flag pacing: random 30–90 s between applications
 const B_JOB_MS = 150_000, B_MAX_STEPS = 18, B_CONFIRM_MS = 15_000;
 const B_MAX_CANDIDATES = 80, B_MAX_PAGES = 3, B_SCROLLS = 4;
 const B_TICK = "ap-board-tick";
@@ -84,9 +84,9 @@ async function bSettle(ctx, tabId, extra = 1500) { await wait(ctx, 1200); await 
 async function bTab() {
   const st = await bGet();
   if (st.tabId != null) { try { await chrome.tabs.get(st.tabId); return st.tabId; } catch { /* closed */ } }
-  const t = await chrome.tabs.create({ url: "about:blank", active: false });
-  await bPatch({ tabId: t.id });
-  return t.id;
+  const id = await workTab("about:blank"); // v2.10: silent minimized window (background.js), else a background tab
+  await bPatch({ tabId: id });
+  return id;
 }
 /** Navigate the runner tab, refusing LinkedIn and anything off the board (or its apply hosts). */
 async function bGo(ctx, tabId, url, board) {
@@ -99,6 +99,7 @@ async function bGo(ctx, tabId, url, board) {
 
 class BoardStop extends Error {}          // stop the whole run (CAPTCHA, login, rate limit, unknown state)
 class BoardSkip extends Error {}          // skip this board, continue with the next one
+class BoardHalt extends Error {}          // v2.10: stop THIS board for the run (CAPTCHA, OTP, unusual activity / limit text); logged in Recent
 
 /** Stop conditions checked on every page. */
 async function bCheck(ctx, tabId, board, where) {
@@ -109,8 +110,9 @@ async function bCheck(ctx, tabId, board, where) {
   if (board.loginUrl.test(h + new URL(t.url).pathname)) throw new BoardStop(`${board.name} asked you to sign in. Sign in to ${board.name} in this Chrome, then press Auto-apply again.`);
   const s = await bCall(tabId, "state", [board.id]);
   if (!s) throw new BoardStop(`Could not read the ${board.name} page (${where}).`);
-  if (s.captcha) throw new BoardStop(`${board.name} showed a CAPTCHA. Stopped so you can deal with it yourself.`);
-  if (s.rateLimit) throw new BoardStop(`${board.name} showed a limit message ("${s.rateText.slice(0, 80)}"). Stopped for today's safety.`);
+  if (s.captcha) throw new BoardHalt(`${board.name} showed a CAPTCHA. Stopped ${board.name} for this run; deal with it yourself in Chrome.`);
+  if (s.otp) throw new BoardHalt(`${board.name} asked for an OTP / verification code. Stopped ${board.name} for this run.`);
+  if (s.rateLimit) throw new BoardHalt(`${board.name} showed a limit / unusual-activity message ("${s.rateText.slice(0, 80)}"). Stopped ${board.name} for this run.`);
   if (s.login) throw new BoardStop(`${board.name} looks signed out (login wall). Sign in to ${board.name} in this Chrome, then press Auto-apply again.`);
   return s;
 }
@@ -134,7 +136,8 @@ async function bConnCheck(ctx, tabId, board) {
   if (!board.hosts.test(h)) return /login|signin|auth/i.test(t.url) ? false : null;
   const s = await bCall(tabId, "state", [board.id]);
   if (!s) return null;
-  if (s.captcha) throw new BoardStop(`${board.name} showed a CAPTCHA. Stopped so you can deal with it yourself.`);
+  if (s.captcha) throw new BoardHalt(`${board.name} showed a CAPTCHA. Stopped ${board.name} for this run; deal with it yourself in Chrome.`);
+  if (s.otp) throw new BoardHalt(`${board.name} asked for an OTP / verification code. Stopped ${board.name} for this run.`);
   return !s.login;
 }
 /** Lightweight check without opening tabs: fetch the recommended page with the user's cookies (host permissions) and
@@ -142,7 +145,7 @@ async function bConnCheck(ctx, tabId, board) {
 async function bLightCheck() {
   const out = [];
   for (const id of BCFG.ORDER) {
-    const b = BCFG.BOARDS[id]; if (id === "indeed") continue;
+    const b = BCFG.BOARDS[id]; if (id === "indeed" || b.ats) continue;
     let connected = null;
     try {
       const r = await fetch(b.recommended[0], { credentials: "include", redirect: "follow", cache: "no-store" });
@@ -276,7 +279,7 @@ function resolveAnswer(q, profile) {
 }
 
 // ───────── one job
-const B_SENIOR = /\b(senior|sr\.?|lead|principal|staff|manager|head|architect|director|vp|avp)\b/i;
+const B_SENIOR = /\b(senior|sr\.?|lead|principal|staff|manager|head|architect|director|vp|avp)\b|\bsde\s*-?\s*(ii|iii|iv|[2-9])\b|\b(engineer|developer)\s+(ii|iii|iv)\b/i; // v2.10: + SDE2/SDE3, Engineer II/III
 /** Smallest "N years" the JD asks for, read only from sentences about experience. null = not stated. */
 function bMinYears(text) {
   let min = null;
@@ -453,13 +456,14 @@ async function bFormLoop(ctx, tabId, board, job, profile, info) {
         const t = await chrome.tabs.get(tabId);
         if (t.status !== "complete") continue;
         const s2 = await bCall(tabId, "state", [board.id]);
-        if (s2 && s2.captcha) throw new BoardStop(`${board.name} showed a CAPTCHA after Submit.`);
-        if (s2 && s2.rateLimit) throw new BoardStop(`${board.name} showed a limit message after Submit.`);
+        if (s2 && s2.captcha) throw new BoardHalt(`${board.name} showed a CAPTCHA after Submit. Stopped ${board.name} for this run.`);
+        if (s2 && s2.otp) throw new BoardHalt(`${board.name} asked for an OTP after Submit. Stopped ${board.name} for this run.`);
+        if (s2 && s2.rateLimit) throw new BoardHalt(`${board.name} showed a limit / unusual-activity message after Submit. Stopped ${board.name} for this run.`);
         if (s2 && s2.success) return { outcome: "applied", reason: "Board confirmed the application." };
         const j2 = await bCall(tabId, "jobInfo", [board.id]);
         if (j2 && j2.applied) return { outcome: "applied", reason: "Button changed to Applied." };
         if (noHash(t.url) !== url0) { const q2 = await bCall(tabId, "questions", [board.id]); if (q2 && q2.mode === "none") return { outcome: "applied", reason: "Form closed and page changed after Submit." }; break; }
-      } catch (e) { if (e instanceof BoardStop) throw e; /* mid-navigation */ }
+      } catch (e) { if (e instanceof BoardStop || e instanceof BoardHalt) throw e; /* mid-navigation */ }
     }
     // Page moved on to another step (some boards label intermediate buttons "Submit") → keep going.
     const again = await bCall(tabId, "questions", [board.id]);
@@ -598,22 +602,30 @@ async function boardLoop() {
       const cap = Math.min(settings[board.id].cap, ((daily.boards || {})[board.id] || 0) + share);
       if (((daily.boards || {})[board.id] || 0) >= cap) { await log("info", `${board.name}: today's cap reached (${cap}). Next board.`); continue; }
       // v2.4: is the user signed in to this board? Report it; skip the board (not the run) when signed out.
-      let conn = null;
-      try { conn = await bConnCheck(ctx, tabId, board); }
-      catch (e) { if (e instanceof BoardStop || e instanceof Cancelled || (e && e.noAccess)) throw e; conn = null; }
-      await postStatus(conn === null ? [] : [{ board: board.id, connected: conn, checked_at: new Date().toISOString() }]);
-      if (conn === false) { await log("warn", `${board.name}: not signed in. Sign in to ${board.name} in this Chrome; skipped today.`); continue; }
+      // v2.10: the ATS board needs no sign-in (public company job APIs).
+      if (!board.ats) {
+        let conn = null;
+        try { conn = await bConnCheck(ctx, tabId, board); }
+        catch (e) {
+          if (e instanceof BoardHalt) { await log("warn", e.message); continue; }
+          if (e instanceof BoardStop || e instanceof Cancelled || (e && e.noAccess)) throw e; conn = null;
+        }
+        await postStatus(conn === null ? [] : [{ board: board.id, connected: conn, checked_at: new Date().toISOString() }]);
+        if (conn === false) { await log("warn", `${board.name}: not signed in. Sign in to ${board.name} in this Chrome; skipped today.`); continue; }
+      }
       const doneSet = new Set((st.done || []).map(urlKey));
+      const minLpa = Math.max(0, Number(srv && srv.min_lpa) || 0);
       let col;
-      try { col = await bCollect(ctx, tabId, board, known, doneSet, filt, searchRoles); }
-      catch (e) { if (e instanceof BoardSkip) { await log("warn", e.message); continue; } throw e; }
+      try { col = board.ats ? await atsCollect(ctx, board, known, doneSet, filt, profile, minLpa) : await bCollect(ctx, tabId, board, known, doneSet, filt, searchRoles); }
+      catch (e) { if (e instanceof BoardSkip || e instanceof BoardHalt) { await log("warn", e.message); continue; } throw e; }
       // v2.7: share the board's recommended listings with the website (Recommended jobs page). Never stops the run.
       if (col.recs.length) {
         try { await api("/api/auto/board", { body: { action: "recs", board: board.id, jobs: col.recs } }); }
         catch (e) { await log("warn", `${board.name}: could not share recommended jobs: ${e && e.message || e}`); }
       }
       await bPatch({ found: (await bGet()).found + col.cands.length });
-      await log(col.cands.length ? "ok" : "info", `${board.name}: ${col.cands.length} recommended job${col.cands.length === 1 ? "" : "s"} to try (${col.skippedApplied} already applied on ${board.name}, ${col.skippedKnown} already in your tracker${col.ineligible ? `, ${col.ineligible} without on-board apply` : ""}${col.offFilter ? `, ${col.offFilter} outside your roles/locations` : ""}).`);
+      if (board.ats) await log(col.cands.length ? "ok" : "info", col.summary);
+      else await log(col.cands.length ? "ok" : "info", `${board.name}: ${col.cands.length} recommended job${col.cands.length === 1 ? "" : "s"} to try (${col.skippedApplied} already applied on ${board.name}, ${col.skippedKnown} already in your tracker${col.ineligible ? `, ${col.ineligible} without on-board apply` : ""}${col.offFilter ? `, ${col.offFilter} outside your roles/locations` : ""}).`);
 
       for (const job of col.cands) {
         st = await bGet(); if (!st.running) return;
@@ -626,10 +638,11 @@ async function boardLoop() {
         await log("info", `${board.name}: opening ${jLabel(job)}`);
         const jctx = { cancelled: false, deadline: Date.now() + B_JOB_MS, clicked: false, submitClicked: false };
         const onStop = setInterval(() => { if (ctx.cancelled) { jctx.cancelled = true; jctx.cancelReason = ctx.cancelReason; } }, 300);
-        let res, stopMsg = "";
-        try { res = await bApplyJob(jctx, tabId, board, job, profile, { fitCheck, minScore, minLpa: Math.max(0, Number(srv && srv.min_lpa) || 0) }); }
+        let res, stopMsg = "", haltMsg = "";
+        try { res = board.ats ? await atsApplyJob(jctx, tabId, board, job, profile, { fitCheck, minScore }) : await bApplyJob(jctx, tabId, board, job, profile, { fitCheck, minScore, minLpa }); }
         catch (e) {
-          if (e instanceof BoardStop) { stopMsg = e.message; res = { outcome: jctx.clicked ? "review" : "none", reason: `Stopped: ${e.message}` }; }
+          if (e instanceof BoardHalt) { haltMsg = e.message; res = { outcome: jctx.clicked ? "review" : "none", reason: `Stopped: ${e.message}` }; }
+          else if (e instanceof BoardStop) { stopMsg = e.message; res = { outcome: jctx.clicked ? "review" : "none", reason: `Stopped: ${e.message}` }; }
           else if (e instanceof Cancelled || jctx.cancelled) res = { outcome: jctx.submitClicked ? "review" : "none", reason: jctx.submitClicked ? "Stopped right after Submit. Check whether it went through." : "Stopped." };
           else if (e && FATAL.has(e.status)) { stopMsg = e.message; res = { outcome: "none", reason: e.message }; }
           else if (e && e.noAccess) { stopMsg = `Chrome would not let ApplyPilot read ${board.name}. Reload the extension or allow site access.`; res = { outcome: "none", reason: stopMsg }; }
@@ -665,13 +678,14 @@ async function boardLoop() {
         await bPatch(p);
         if (stopMsg) return bStop(stopMsg);
         if (!(await bGet()).running) return;
+        if (haltMsg) { await log("warn", haltMsg); break; } // v2.10: this board is done for the run; next board
         const delay = attempted ? rand(B_DELAY_MIN, B_DELAY_MAX) : rand(4000, 9000);
         await bPatch({ nextAt: Date.now() + delay, status: "waiting", message: `Next ${attempted ? "application" : "job"} in ${Math.round(delay / 1000)}s` });
       }
     }
     await bStop("Done: worked through the recommended jobs on every enabled board.");
   } catch (e) {
-    if (e instanceof BoardStop) return bStop(e.message);
+    if (e instanceof BoardStop || e instanceof BoardHalt) return bStop(e.message);
     if (e instanceof Cancelled || ctx.cancelled) return;
     if (e && e.noAccess) return bStop("Chrome would not let ApplyPilot open the job board. Reload the extension (site access for the boards is part of v2.3).");
     if (e && e.status) return bStop(`Stopped: ${e.message}`);
@@ -720,7 +734,8 @@ async function bStop(message = "Stopped.") {
   await bPatch({ running: false, status: "stopped", message, nextAt: 0, current: null });
   await log("info", `Board Auto-Apply: ${message}`);
   const s2 = await bGet();
-  if (s2.tabId != null) { try { await chrome.tabs.remove(s2.tabId); } catch { /* gone */ } await bPatch({ tabId: null }); }
+  if (s2.tabId != null) await bPatch({ tabId: null });
+  await closeWork(s2.tabId); // v2.10: also closes the silent window
 }
 
 // ───────── v2.4 zero-click schedule: daily alarm at run_time (IST) + a 15-min check that also catches up when Chrome
@@ -780,3 +795,204 @@ bGet().then(async (s) => {
   }
   bKick();
 });
+
+// ───────── v2.10 ATS (company sites): Greenhouse / Lever / Ashby public job APIs. No login, no scraping of listings.
+const ATS_IN = /india|bengaluru|bangalore|hyderabad|pune|mumbai|gurgaon|gurugram|noida|chennai|delhi|kolkata|ahmedabad|jaipur|kochi|coimbatore|indore|chandigarh|thiruvananthapuram|trivandrum|mysuru|mysore|visakhapatnam/i;
+const ATS_REMOTE = /^\s*remote\s*$|remote[^·]{0,30}(india|apac|asia|anywhere|global|worldwide)|(apac|asia|anywhere|global|worldwide)[^·]{0,30}remote/i;
+const deHtml = (h) => String(h || "").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&nbsp;/g, " ").replace(/&amp;/g, "&")
+  .replace(/<br\s*\/?>/gi, "\n").replace(/<\/(p|div|li|h\d|ul|ol)>/gi, "\n").replace(/<[^>]+>/g, " ").replace(/&[a-z#0-9]+;/gi, " ").replace(/[ \t]+/g, " ").replace(/\n\s*\n+/g, "\n").trim();
+const atsLocStr = (parts) => [...new Set(parts.map((x) => String(x || "").trim()).filter(Boolean))].join(" · ");
+
+/** One company's open jobs, normalised: { url (apply page), page, title, company, location, description }. */
+async function atsFetchCompany(c) {
+  const api = c.ats === "greenhouse" ? `https://boards-api.greenhouse.io/v1/boards/${encodeURIComponent(c.slug)}/jobs?content=true`
+    : c.ats === "lever" ? `https://api.lever.co/v0/postings/${encodeURIComponent(c.slug)}?mode=json`
+    : `https://api.ashbyhq.com/posting-api/job-board/${encodeURIComponent(c.slug)}`;
+  let j;
+  try { const r = await fetch(api, { cache: "no-store" }); if (!r.ok) return { err: `HTTP ${r.status}` }; j = await r.json(); }
+  catch (e) { return { err: String((e && e.message) || e).slice(0, 60) }; }
+  const out = [];
+  if (c.ats === "greenhouse") {
+    for (const x of (j && j.jobs) || []) {
+      let host = "job-boards.greenhouse.io"; try { const h = new URL(x.absolute_url).hostname; if (/(^|\.)greenhouse\.io$/i.test(h)) host = h; } catch { /* custom careers site */ }
+      // The embed form always lives on greenhouse.io, even when absolute_url points at the company's own careers site.
+      out.push({ url: `https://${host}/embed/job_app?for=${encodeURIComponent(c.slug)}&token=${x.id}`, page: x.absolute_url || "", title: x.title || "", company: c.name,
+        location: atsLocStr([x.location && x.location.name]), description: deHtml(x.content).slice(0, 8000) });
+    }
+  } else if (c.ats === "lever") {
+    for (const x of Array.isArray(j) ? j : []) {
+      const cat = x.categories || {};
+      out.push({ url: x.applyUrl || (x.hostedUrl ? `${x.hostedUrl}/apply` : ""), page: x.hostedUrl || "", title: x.text || "", company: c.name,
+        location: atsLocStr([cat.location, ...(cat.allLocations || []), x.workplaceType === "remote" ? "Remote" : ""]),
+        description: [x.descriptionPlain, ...(x.lists || []).map((l) => `${l.text || ""}\n${deHtml(l.content)}`), x.additionalPlain].filter(Boolean).join("\n").slice(0, 8000) });
+    }
+  } else {
+    for (const x of (j && j.jobs) || []) {
+      if (x.isListed === false) continue;
+      out.push({ url: x.applyUrl || (x.jobUrl ? `${x.jobUrl}/application` : ""), page: x.jobUrl || "", title: x.title || "", company: c.name,
+        location: atsLocStr([x.location, ...(x.secondaryLocations || []).map((s) => s && s.location), x.isRemote ? "Remote" : ""]),
+        description: String(x.descriptionPlain || deHtml(x.descriptionHtml)).slice(0, 8000) });
+    }
+  }
+  return { jobs: out };
+}
+function atsLocOk(loc, filt) {
+  if (!(ATS_IN.test(loc) || ATS_REMOTE.test(loc))) return false;
+  if (!filt.locations.length) return true;
+  const L = loc.toLowerCase();
+  return filt.locations.some((l) => (l === "remote" ? /remote/.test(L) : L.includes(l)));
+}
+/** Only pay sentences, so revenue / funding figures in a JD never trip the min-salary filter. */
+const atsPayText = (d) => (String(d || "").match(/[^.\n]*(salary|ctc|compensation|stipend|pay range|package)[^.\n]*/gi) || []).join(" ");
+
+async function atsCollect(ctx, board, known, doneSet, filt, profile, minLpa) {
+  await bPatch({ status: "collecting", message: "Reading company career sites…" });
+  const comps = BCFG.ATS_COMPANIES || [], all = [], errs = [];
+  for (let i = 0; i < comps.length; i += 6) {
+    guard(ctx);
+    const part = await Promise.all(comps.slice(i, i + 6).map((c) => atsFetchCompany(c).then((r) => ({ c, r }))));
+    for (const { c, r } of part) { if (r.err) errs.push(`${c.name} (${r.err})`); else all.push(...r.jobs); }
+  }
+  if (errs.length) await log("warn", `ATS: could not read ${errs.slice(0, 5).join(", ")}${errs.length > 5 ? ` (+${errs.length - 5} more)` : ""}.`);
+  const byCo = new Map(); const seen = new Set();
+  let offLoc = 0, offRole = 0, judged = 0, skippedKnown = 0;
+  for (const j of all) {
+    if (!j.url || !j.title || BCFG.EXCLUDED.test(hostOf(j.url)) || !board.hosts.test(hostOf(j.url))) continue;
+    const k = urlKey(j.url); if (seen.has(k) || doneSet.has(k)) continue; seen.add(k);
+    if (known.urls.has(k) || (j.page && known.urls.has(urlKey(j.page))) || known.keys.has(`${normKey(j.company)}|${normKey(j.title)}`)) { skippedKnown++; continue; }
+    if (!atsLocOk(j.location, filt)) { offLoc++; continue; }
+    if (!bFilter({ title: j.title, text: "" }, { roles: filt.roles, locations: [] })) { offRole++; continue; }
+    if (bJudge({ title: j.title, description: j.description }, { text: atsPayText(j.description) }, profile, minLpa)) { judged++; continue; }
+    if (!byCo.has(j.company)) byCo.set(j.company, []);
+    byCo.get(j.company).push(j);
+  }
+  // Round-robin across companies so one big employer can't fill the whole cap.
+  const cands = []; const lists = [...byCo.values()];
+  for (let r = 0; cands.length < B_MAX_CANDIDATES && lists.some((l) => l.length > r); r++) for (const l of lists) if (l[r] && cands.length < B_MAX_CANDIDATES) cands.push(l[r]);
+  const summary = `ATS (company sites): ${cands.length} job${cands.length === 1 ? "" : "s"} to try from ${comps.length - errs.length} companies (${offLoc} outside India/remote${filt.locations.length ? "/your locations" : ""}, ${offRole} other roles, ${judged} senior/years/pay, ${skippedKnown} already in your tracker).`;
+  return { cands, recs: [], summary, skippedApplied: 0, skippedKnown, ineligible: 0, offFilter: offLoc + offRole };
+}
+
+/** Apply to one ATS job: open its apply page in the run's (silent) tab and run the saved-jobs autofill agent (doJob in
+ *  background.js), which uploads the stored resume. Anything it can't answer from the profile → skipped with the reason. */
+async function atsApplyJob(ctx, tabId, board, job, profile, opts) {
+  if (opts.fitCheck && (job.description || "").length > 80) {
+    try {
+      const s = await api("/api/score", { body: { title: job.title, description: job.description } });
+      if (s.score < opts.minScore) return { outcome: "skip", lowMatch: true, reason: `Match ${s.score}% is below your ${opts.minScore}% minimum.` };
+      job.score = s.score;
+    } catch (e) { if (e && FATAL.has(e.status)) throw e; }
+  }
+  if (!(await chrome.permissions.contains({ origins: [`${new URL(job.url).origin}/*`] }))) return { outcome: "skip", reason: `No site access for ${hostOf(job.url)}. Reload the extension (v2.10 adds it).` };
+  await api("/api/auto/board", { body: { action: "precheck" } }); // 402 when this month's autofills are used up (fatal)
+  guard(ctx);
+  const app = { id: null, job_id: null, url: job.url, company: job.company, title: job.title };
+  ctx.useTab = tabId; ctx.focused = false;
+  ctx.onStep = (step) => patchBoardCurrent({ step });
+  ctx.beforeAgent = async () => { if (app.id) return; const r = await trackerLog(board, job, "saved", "ATS: filling the application on the company site."); if (r && r.id) app.id = r.id; };
+  const timer = setTimeout(() => { ctx.cancelled = true; ctx.cancelReason = "timeout"; }, Math.max(1000, ctx.deadline - Date.now()));
+  let r;
+  try { r = await doJob(app, ctx); }
+  catch (e) {
+    if ((e instanceof Cancelled || ctx.cancelled) && ctx.cancelReason === "timeout")
+      r = ctx.submitClicked ? { outcome: "review", reason: "Clicked Submit but hit the time limit before a confirmation. Check whether it went through." } : { outcome: "left", reason: "Time limit hit before Submit; nothing was submitted." };
+    else if (e && e.noAccess) r = { outcome: "left", reason: `Chrome would not let ApplyPilot read ${hostOf(job.url)}.` };
+    else throw e;
+  } finally { clearTimeout(timer); }
+  const site = hostOf(job.url);
+  if (r.outcome === "applied") return { outcome: "applied", reason: `${site}: ${r.reason}` };
+  if (r.halt) { if (app.id) ctx.clicked = true; throw new BoardHalt(`ATS (company sites): ${r.reason} (${job.company}, ${site}). Stopped ATS for this run.`); }
+  if (ctx.submitClicked) return { outcome: "review", reason: r.reason };
+  // Not submitted: skip with the reason; questions it couldn't answer go to the answer bank as unanswered.
+  if (r.asks && r.asks.length) api("/api/auto/board", { body: { action: "unanswered", questions: r.asks.slice(0, 10) } }).catch(() => {});
+  if (app.id) await trackerLog(board, job, "needs_review", `ATS: not submitted: ${r.reason}`);
+  return { outcome: "skip", reason: `not submitted: ${r.reason}` };
+}
+
+// ───────── v2.10 portal side panel: "Jobs for you on <board>" from the job cards on the active tab, + one-job Apply.
+let portalProfile = null, portalProfileAt = 0, portalBusy = false;
+async function portalCtx() {
+  if (!portalProfile || Date.now() - portalProfileAt > 600_000) { portalProfile = (await api("/api/profile", { method: "GET" })).profile || {}; portalProfileAt = Date.now(); }
+  const c = await cachedAuto();
+  let srv = c && c.settings; if (!srv) srv = await fetchAutoSettings().catch(() => null);
+  return { profile: portalProfile, srv: srv || {} };
+}
+const bSalary = (t) => {
+  const m = String(t || "").match(/(?:₹|\brs\.?|\binr)\s*\d[\d,]{2,}(?:\.\d+)?\s*(?:k|l|lpa)?(?:\s*(?:-|–|to)\s*(?:₹|\brs\.?|\binr)?\s*[\d,]+(?:\.\d+)?\s*(?:k|l|lpa)?)?(?:\s*(?:\/|per|a)\s*(?:month|mo|year|yr|annum))?|\d+(?:\.\d+)?\s*(?:-|–|to)?\s*(?:\d+(?:\.\d+)?)?\s*(?:lacs?|lakhs?|lpa|l\.p\.a\.?)(?:\s*p\.?\s?a\.?)?/i);
+  return m ? m[0].replace(/\s+/g, " ").trim().slice(0, 40) : "";
+};
+async function portalList(tabId, boardId) {
+  const board = BCFG.BOARDS[boardId];
+  if (!board || board.ats) return { ok: false, error: "Not a supported job board." };
+  const { api: base, key } = await chrome.storage.local.get(["api", "key"]);
+  if (!base || !key) return { ok: false, error: "Sign in first." };
+  const t = await chrome.tabs.get(tabId);
+  if (!board.hosts.test(hostOf(t.url)) || BCFG.EXCLUDED.test(hostOf(t.url))) return { ok: false, error: `This tab is not on ${board.name}.` };
+  let r;
+  try { r = await bCall(tabId, "listJobs", [boardId]); } catch (e) { return { ok: false, error: e && e.noAccess ? `Chrome won't let ApplyPilot read ${board.name}. Reload the extension.` : String((e && e.message) || e) }; }
+  const jobs = (r && r.jobs) || [];
+  const { profile, srv } = await portalCtx();
+  const list = (v) => (Array.isArray(v) ? v.map(fNorm).map((x) => x.trim()).filter(Boolean).slice(0, 30) : []);
+  const filt = { roles: list(srv.roles), locations: list(srv.locations) };
+  const minLpa = Math.max(0, Number(srv.min_lpa) || 0);
+  const rows = []; let hidden = 0, applied = 0;
+  const seen = new Set();
+  for (const j of jobs) {
+    const k = urlKey(j.url); if (!j.title || !j.url || seen.has(k) || BCFG.EXCLUDED.test(hostOf(j.url)) || !board.hosts.test(hostOf(j.url))) continue; seen.add(k);
+    if (j.applied) { applied++; continue; }
+    if (!bFilter(j, filt) || bJudge({ title: j.title, description: j.text }, j, profile, minLpa)) { hidden++; continue; }
+    rows.push({ url: j.url, title: j.title, company: j.company || "", salary: bSalary(j.text) || "Not disclosed", eligible: !!j.eligible, fit: null, text: j.text || "" });
+  }
+  const top = rows.slice(0, 30);
+  await Promise.all(top.map(async (row) => {
+    if (row.text.length < 40) return;
+    try { const s = await api("/api/score", { body: { title: row.title, description: row.text } }); row.fit = Number.isFinite(s.score) ? s.score : null; } catch { /* optional */ }
+  }));
+  top.forEach((x) => { delete x.text; });
+  top.sort((a, b) => (b.fit ?? -1) - (a.fit ?? -1));
+  return { ok: true, board: board.id, name: board.name, url: t.url, rows: top, hidden, applied, total: jobs.length, filters: filt };
+}
+async function portalApply(boardId, job) {
+  const board = BCFG.BOARDS[boardId];
+  if (!board || board.ats || !job || !job.url || !board.hosts.test(hostOf(job.url)) || BCFG.EXCLUDED.test(hostOf(job.url))) return { ok: false, error: "Unsupported job link." };
+  if (portalBusy) return { ok: false, error: "Another Apply is still running. One job at a time." };
+  if ((await bGet()).running || (await getState()).running) return { ok: false, error: "An Auto run is going. Wait for it to finish or press Stop." };
+  const { api: base, key } = await chrome.storage.local.get(["api", "key"]);
+  if (!base || !key) return { ok: false, error: "Sign in first." };
+  const overall = await bOverallCap(), daily = await getDaily(), settings = await boardSettings();
+  if (daily.count >= overall) return { ok: false, error: `Daily cap reached (${daily.count}/${overall}). Resets at midnight IST.` };
+  if (((daily.boards || {})[board.id] || 0) >= settings[board.id].cap) return { ok: false, error: `${board.name}: today's cap reached (${settings[board.id].cap}).` };
+  portalBusy = true;
+  const ka = setInterval(() => { chrome.runtime.getPlatformInfo().catch(() => {}); }, 20_000);
+  const ctx = { cancelled: false, deadline: Date.now() + B_JOB_MS, clicked: false, submitClicked: false };
+  const timer = setTimeout(() => { ctx.cancelled = true; ctx.cancelReason = "timeout"; }, B_JOB_MS);
+  const j = { url: job.url, title: String(job.title || "").slice(0, 200), company: String(job.company || "").slice(0, 160), text: "" };
+  let tabId = null, res;
+  await log("info", `${board.name}: Apply from the side panel: ${jLabel(j)}`);
+  try {
+    const { profile } = await portalCtx();
+    tabId = await workTab("about:blank");
+    res = await bApplyJob(ctx, tabId, board, j, profile, { fitCheck: false, minScore: 0, minLpa: 0 });
+  } catch (e) {
+    if (e instanceof BoardStop || e instanceof BoardHalt) res = { outcome: ctx.clicked ? "review" : "skip", reason: e.message };
+    else if (e instanceof Cancelled || ctx.cancelled) res = { outcome: ctx.submitClicked ? "review" : "skip", reason: ctx.submitClicked ? "Time limit hit right after Submit. Check whether it went through." : "Time limit hit; nothing was submitted." };
+    else if (e && e.noAccess) res = { outcome: "skip", reason: `Chrome would not let ApplyPilot read ${board.name}.` };
+    else if (e && e.status) res = { outcome: "skip", reason: e.message };
+    else res = { outcome: ctx.submitClicked ? "review" : "skip", reason: `Unexpected error: ${String((e && e.message) || e).slice(0, 160)}` };
+  } finally { clearTimeout(timer); clearInterval(ka); await closeWork(tabId); portalBusy = false; }
+  if (res.outcome === "unknown") res = { outcome: "review", reason: res.reason };
+  try {
+    if (res.outcome === "applied") {
+      await trackerLog(board, j, "applied", `${board.name}: ${res.reason} (Apply from the side panel).`);
+      const d = await bumpBoardDaily(board.id);
+      await log("ok", `${board.name}: applied to ${jLabel(j)} (${d.count} today).`);
+    } else if (res.outcome === "review") {
+      await trackerLog(board, j, "needs_review", `${board.name}: ${res.reason}`);
+      await log("warn", `${board.name}: needs review: ${jLabel(j)}: ${res.reason}`);
+    } else if (res.outcome === "queue") {
+      await trackerLog(board, { ...j, url: res.href }, "saved", `${board.name}: on-board apply not available; added to the Auto queue (${hostOf(res.href)}).`);
+      await log("info", `${board.name}: ${jLabel(j)} applies on ${hostOf(res.href)}; added to your Auto queue as Saved.`);
+    } else await log("info", `${board.name}: skipped ${jLabel(j)}: ${res.reason}`);
+  } catch (e) { await log("error", `${board.name}: could not update the tracker: ${(e && e.message) || e}`); }
+  return { ok: true, outcome: res.outcome, reason: res.reason };
+}

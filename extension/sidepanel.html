@@ -74,6 +74,13 @@
       </div>
     </section>
 
+    <!-- v2.10 Portal: job cards on the board you're browsing, filtered by your Auto settings -->
+    <section class="card" id="portalCard" hidden>
+      <div class="row between"><h2 id="portalTitle">Jobs for you</h2><a href="#" id="portalRefresh" class="small">Refresh</a></div>
+      <p id="portalLine" class="small muted"></p>
+      <ol id="portalList" class="plist"></ol>
+    </section>
+
     <!-- Boards -->
     <section class="boards" aria-label="Job board sign-in">
       <span class="small muted">Boards</span>
@@ -107,6 +114,7 @@
     <p class="small" id="acctLine"></p>
     <p class="small muted" id="accessLine"></p>
     <p class="small muted" id="resumeLine"></p>
+    <label class="row small silent-row"><input id="silentMode" type="checkbox" checked> <span><b>Silent mode</b>: Auto runs and Apply work in one minimized window, so no new tabs open in yours.</span></label>
     <ul class="linklist small">
       <li><a href="#" data-web="/dashboard/auto">Auto-apply settings (cap, roles, location, min match) ↗</a></li>
       <li><a href="#" data-web="/dashboard/profile">Resume, profile and saved answers ↗</a></li>
@@ -122,6 +130,7 @@
     <p class="links small"><a href="#" id="signOut">Sign out</a></p>
   </dialog>
 
+  <script src="boards.js"></script>
   <script src="sidepanel.js"></script>
 </body>
 </html>

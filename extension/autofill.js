@@ -141,6 +141,9 @@
   const ENTRY_RE = /^(apply|apply now|apply for this (job|position|role)|apply to this job|start application|i('|’)m interested)\b/i;
   const SSO_RE = /\b(with|using|via) (google|linkedin|facebook|apple|microsoft|github|indeed|email|otp)\b|sign ?in|log ?in|sign ?up|register|create account/i;
   const btnText = (b) => clean(b.innerText || b.value || b.getAttribute("aria-label") || "").slice(0, 80);
+  // v2.10: anti-flag stops (OTP prompt, "unusual activity" / rate-limit text).
+  const OTP_TEXT = /enter (the |your )?(otp|one[- ]time (password|passcode|code))|otp (has been |was )?sent|enter (the |your )?(\d-digit )?verification code|verification code (has been |was )?sent to/i;
+  const UNUSUAL_TEXT = /unusual (activity|traffic)|suspicious activity|automated (queries|requests)|too many (applications|requests|attempts)|are you a robot|verify (that )?you are (a )?human|temporarily blocked|request (has been )?blocked/i;
   const pageText = () => (document.body ? document.body.innerText || "" : "").slice(0, 60000);
 
   function captchaVisible() {
@@ -160,7 +163,9 @@
   }
   /** Snapshot for Auto mode: is there a CAPTCHA / login wall / success message, and how many fields? */
   function inspect() {
+    const t15 = pageText().slice(0, 15000);
     return { top: window === window.top, url: location.href, captcha: captchaVisible(), login: loginWall(), success: SUCCESS.test(pageText()),
+      otp: OTP_TEXT.test(t15) || [...document.querySelectorAll("input[autocomplete='one-time-code']")].some(visible), unusual: UNUSUAL_TEXT.test(t15),
       fields: [...document.querySelectorAll("input, textarea, select")].filter((e) => !SKIP.includes((e.type || "").toLowerCase()) && (e.type === "file" || visible(e))).length,
       textLen: pageText().length, visibility: document.visibilityState };
   }

@@ -16,7 +16,7 @@ export const AUTO_PRESETS: AutoPreset[] = [
   { id: "match70", label: "Only jobs with 70%+ match", patch: { min_match: 70 } }
 ];
 
-export const BOARD_NAMES: Record<BoardId, string> = { naukri: "Naukri", internshala: "Internshala", indeed: "Indeed", shine: "Shine", hirist: "Hirist", instahyre: "Instahyre", cutshort: "Cutshort", foundit: "Foundit", wellfound: "Wellfound" };
+export const BOARD_NAMES: Record<BoardId, string> = { naukri: "Naukri", internshala: "Internshala", indeed: "Indeed", shine: "Shine", hirist: "Hirist", instahyre: "Instahyre", cutshort: "Cutshort", foundit: "Foundit", wellfound: "Wellfound", ats: "ATS (company sites)" };
 
 /** Merge a patch into settings. `boards` turns the listed boards on and the rest off. */
 export function applyPatch(s: AutoSettings, p: AutoPatch): AutoSettings {

@@ -13,6 +13,7 @@ const JOB_SITES = [
   "https://*.myworkdayjobs.com/*", "https://*.myworkdaysite.com/*", "https://jobs.ashbyhq.com/*",
   "https://*.shine.com/*", "https://*.hirist.tech/*", "https://*.instahyre.com/*", "https://cutshort.io/*", "https://wellfound.com/*"
 ];
+const PB = self.AP_BOARDS || { BOARDS: {}, ORDER: [], EXCLUDED: /(^|\.)linkedin\.com$/i }; // boards.js (v2.10 portal list)
 const ALL_SITES = ["https://*/*", "http://*/*"];
 const NEED_ACCESS = "NEED_ACCESS";
 const BOARDS = [
@@ -238,7 +239,7 @@ function render() {
     t.textContent = st.autoEnabled ? "Ready" : "Ready when you are"; line.textContent = nextRunLine();
     setPrimary("Run now", runNow);
   }
-  renderContext(); renderChips(boards); renderRecent();
+  renderContext(); renderPortal(); renderChips(boards); renderRecent();
 }
 $("primary").addEventListener("click", () => { if (primaryAction) primaryAction(); });
 
@@ -304,9 +305,11 @@ async function detect() {
     }
     page = { status: appForm ? "form" : current.job ? "job" : "none", job: current.job, hasForm: appForm };
     render();
+    loadPortal(tab);
     if (current.job) scoreJob(current.job);
   } catch (e) {
     page = { status: e.message === NEED_ACCESS ? "access" : "none", job: null, hasForm: false }; current.job = null; render();
+    activeTab().then(loadPortal).catch(() => {});
   } finally { detecting = false; }
   consumeFabAction();
 }
@@ -471,7 +474,7 @@ async function startRun(kind) {
     if (!useBoards) { await refreshAccess(); if (!st.access.boards) throw new Error("Allow site access first (all sites recommended)."); }
     const r = await chrome.runtime.sendMessage({ type: useBoards ? "board:start" : "auto:start" });
     if (!r || !r.ok) throw new Error((r && r.error) || "Could not start.");
-    say("Started. Jobs open in a background tab; keep Chrome open.", "ok");
+    say((await chrome.storage.local.get("silentMode")).silentMode === false ? "Started. Jobs open in a background tab; keep Chrome open." : "Started silently in a minimized window; keep Chrome open.", "ok");
   });
   refreshAuto();
 }
@@ -486,6 +489,70 @@ async function stopAll() {
   try { await chrome.runtime.sendMessage({ type: "auto:stop" }); say("Stopped."); } catch (err) { say(String(err.message || err), "bad"); }
   refreshAuto();
 }
+
+// ───────── v2.10 portal: "Jobs for you on <board>" (cards read by boardpage.js, filtered in the service worker)
+let portal = { board: null, tabId: null, url: "", status: "idle", rows: [], line: "", at: 0, results: {} };
+function portalBoardOf(url) {
+  let h = ""; try { h = new URL(url).hostname.toLowerCase(); } catch { return null; }
+  if (!h || PB.EXCLUDED.test(h)) return null;
+  return PB.ORDER.map((id) => PB.BOARDS[id]).find((b) => b && !b.ats && b.hosts.test(h)) || null;
+}
+async function loadPortal(tab, force = false) {
+  const b = tab && portalBoardOf(tab.url || "");
+  if (!b || !signedIn()) { if (portal.board) { portal = { ...portal, board: null, rows: [] }; renderPortal(); } return; }
+  if (!force && portal.board === b.id && portal.tabId === tab.id && portal.url === tab.url && Date.now() - portal.at < 60_000 && portal.status !== "error") return;
+  portal = { ...portal, board: b.id, name: b.name, tabId: tab.id, url: tab.url, status: "loading", line: `Reading the jobs on this ${b.name} page…`, at: Date.now() };
+  renderPortal();
+  let r;
+  try { r = await chrome.runtime.sendMessage({ type: "portal:list", tabId: tab.id, board: b.id }); } catch (e) { r = { ok: false, error: String(e.message || e) }; }
+  if (portal.tabId !== tab.id || portal.url !== tab.url) return; // tab moved on meanwhile
+  if (!r || !r.ok) { portal = { ...portal, status: "error", rows: [], line: (r && r.error) || "Could not read this page." }; return renderPortal(); }
+  const f = r.filters || { roles: [], locations: [] };
+  const why = [f.roles.length ? "your roles" : "", f.locations.length ? "locations" : "", "seniority/years", "min pay"].filter(Boolean).join(", ");
+  portal = { ...portal, status: "ready", rows: r.rows || [], at: Date.now(),
+    line: r.total ? `${(r.rows || []).length} match your settings${r.hidden ? ` · ${r.hidden} hidden by ${why}` : ""}${r.applied ? ` · ${r.applied} already applied` : ""}.` : "No job cards on this page. Open a job list or search results." };
+  renderPortal();
+}
+function renderPortal() {
+  const card = $("portalCard"); const show = signedIn() && !!portal.board;
+  card.hidden = !show; if (!show) return;
+  $("portalTitle").textContent = `Jobs for you on ${portal.name || ""}`;
+  $("portalLine").textContent = portal.line || "";
+  const ol = $("portalList"); clear(ol);
+  for (const r of portal.rows) {
+    const done = portal.results[r.url];
+    const fitCls = r.fit == null ? "" : r.fit >= 60 ? "hi" : r.fit >= 35 ? "mid" : "";
+    const applyBtn = el("button", { class: "btn sm primary", type: "button", disabled: !!done, title: r.eligible ? "Apply in the background (silent)" : "May apply on the company site; ApplyPilot checks first",
+      onclick: (e) => portalApplyClick(r, e.currentTarget) }, done ? (done.busy ? "Applying…" : "Done") : "Apply");
+    ol.append(el("li", { class: "prow" }, [
+      el("span", { class: "pt", text: r.title }),
+      el("span", { class: "pm", text: [r.company, r.salary].filter(Boolean).join(" · ") }),
+      el("div", { class: "pa" }, [
+        el("span", { class: `fit ${fitCls}`, text: r.fit == null ? "Fit –" : `Fit ${r.fit}%` }),
+        el("button", { class: "btn sm ghost", type: "button", onclick: () => chrome.tabs.create({ url: r.url }) }, "Open"),
+        applyBtn
+      ]),
+      done && !done.busy ? el("span", { class: `pr ${done.kind}`, text: done.text }) : null
+    ]));
+  }
+}
+async function portalApplyClick(r, btn) {
+  if (portal.results[r.url]) return;
+  portal.results[r.url] = { busy: true }; btn.disabled = true; btn.textContent = "Applying…";
+  let res;
+  try { res = await chrome.runtime.sendMessage({ type: "portal:apply", board: portal.board, job: { url: r.url, title: r.title, company: r.company } }); }
+  catch (e) { res = { ok: false, error: String(e.message || e) }; }
+  if (!res || !res.ok) { delete portal.results[r.url]; say((res && res.error) || "Could not apply.", "bad"); return renderPortal(); }
+  const map = { applied: ["ok", "Applied ✓"], review: ["warn", "Needs review"], queue: ["warn", "Applies on the company site: added to your queue"], skip: ["bad", "Skipped"] };
+  const [kind, label] = map[res.outcome] || ["bad", "Not applied"];
+  portal.results[r.url] = { kind, text: res.outcome === "applied" ? label : `${label}: ${res.reason || ""}` };
+  renderPortal();
+}
+$("portalRefresh").addEventListener("click", (e) => { e.preventDefault(); activeTab().then((t) => loadPortal(t, true)).catch(() => {}); });
+
+// ───────── v2.10 silent mode toggle (default on)
+chrome.storage.local.get("silentMode").then(({ silentMode }) => { $("silentMode").checked = silentMode !== false; });
+$("silentMode").addEventListener("change", (e) => chrome.storage.local.set({ silentMode: e.currentTarget.checked }));
 
 // ───────── board chips + recent
 function renderChips(boards) {

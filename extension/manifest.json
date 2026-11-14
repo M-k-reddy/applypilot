@@ -2,8 +2,8 @@
   "manifest_version": 3,
   "name": "ApplyPilot – AI job copilot",
   "short_name": "ApplyPilot",
-  "version": "2.9.1",
-  "description": "Save jobs, see your match, fill application forms in one click. Optional Auto mode applies on Naukri, Internshala, Indeed, Shine, Hirist, Instahyre, Cutshort, Foundit and Wellfound only when confident.",
+  "version": "2.10.0",
+  "description": "Save jobs, see your match, fill application forms in one click. Optional Auto mode applies on Naukri, Internshala, Indeed, Shine, Hirist, Instahyre, Cutshort, Foundit, Wellfound and company career sites (Greenhouse, Lever, Ashby) only when confident.",
   "minimum_chrome_version": "116",
   "permissions": [
     "storage",
@@ -33,7 +33,15 @@
     "https://cutshort.io/*",
     "https://*.cutshort.io/*",
     "https://wellfound.com/*",
-    "https://*.wellfound.com/*"
+    "https://*.wellfound.com/*",
+    "https://*.greenhouse.io/*",
+    "https://job-boards.greenhouse.io/*",
+    "https://boards.greenhouse.io/*",
+    "https://boards-api.greenhouse.io/*",
+    "https://jobs.lever.co/*",
+    "https://api.lever.co/*",
+    "https://jobs.ashbyhq.com/*",
+    "https://api.ashbyhq.com/*"
   ],
   "optional_host_permissions": [
     "https://*/*",

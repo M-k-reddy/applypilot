@@ -10,14 +10,14 @@ export function weekStats(apps: AppRow[]) {
 }
 
 
-const BOARD_NAMES: Record<string, string> = { naukri: "Naukri", internshala: "Internshala", indeed: "Indeed", shine: "Shine", hirist: "Hirist", instahyre: "Instahyre", cutshort: "Cutshort", foundit: "Foundit", wellfound: "Wellfound", linkedin: "LinkedIn" };
+const BOARD_NAMES: Record<string, string> = { naukri: "Naukri", internshala: "Internshala", indeed: "Indeed", shine: "Shine", hirist: "Hirist", instahyre: "Instahyre", cutshort: "Cutshort", foundit: "Foundit", wellfound: "Wellfound", ats: "ATS (company sites)", linkedin: "LinkedIn" };
 /** Where the application went: the board name, else the link's site. */
 export function siteOf(a: { board?: string | null; page_url?: string | null }): string {
   if (a.board) return BOARD_NAMES[a.board] || a.board;
   try { return a.page_url ? new URL(a.page_url).hostname.replace(/^www\./, "") : ""; } catch { return ""; }
 }
 
-export const BOARD_TABS = ["naukri", "internshala", "indeed", "shine", "hirist", "instahyre", "cutshort", "foundit", "wellfound"];
+export const BOARD_TABS = ["naukri", "internshala", "indeed", "shine", "hirist", "instahyre", "cutshort", "foundit", "wellfound", "ats"];
 export const boardLabel = (b: string) => BOARD_NAMES[b] || (b === "others" ? "Others" : b);
 export const initials = (s: string) => (s || "?").replace(/[^A-Za-z0-9 ]/g, " ").trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join("").toUpperCase() || "?";
 export const istTime = (d: string | null) => d ? new Date(d).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }) : "";

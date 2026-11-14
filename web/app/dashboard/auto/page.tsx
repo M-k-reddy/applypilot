@@ -21,6 +21,7 @@ const BOARDS: { id: BoardId | "linkedin"; name: string; login: string }[] = [
   { id: "cutshort", name: "Cutshort", login: "https://cutshort.io/login" },
   { id: "foundit", name: "Foundit", login: "https://www.foundit.in/rio/login" },
   { id: "wellfound", name: "Wellfound", login: "https://wellfound.com/login" },
+  { id: "ats", name: "ATS (company sites)", login: "" },
   { id: "linkedin", name: "LinkedIn", login: "" }
 ];
 const fmt = (d: string) => (d ? new Date(d).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "medium", timeStyle: "short" }) : "");
@@ -110,11 +111,12 @@ export default function AutoApplyPage() {
         <p className="small muted">Sign in to each board in the same Chrome the extension runs in. ApplyPilot never sees or stores your board passwords; the extension reports whether you are signed in before each run.</p>
         <div className="stack" style={{ gap: 8 }}>
           {BOARDS.map((b) => {
-            const st = b.id === "linkedin" ? undefined : d.board_status[b.id];
+            const st = b.id === "linkedin" || b.id === "ats" ? undefined : d.board_status[b.id];
             return (
               <div key={b.id} className="row between">
                 <b>{b.name}</b>
                 {b.id === "linkedin" ? <span className="badge">Not supported (LinkedIn&apos;s terms)</span>
+                  : b.id === "ats" ? <span className="badge badge-ok">No sign-in needed (Greenhouse, Lever, Ashby)</span>
                   : st?.connected === true ? <span className="badge badge-ok" title={fmt(st.checked_at)}>Connected ✓ · checked {fmt(st.checked_at)}</span>
                   : <span className="row"><span className={`badge ${st?.connected === false ? "badge-warn" : ""}`}>{st?.connected === false ? "Not signed in" : "Not checked yet"}</span>
                       <a className="btn btn-sm" href={b.login} target="_blank" rel="noreferrer">Sign in on {b.name} in Chrome</a></span>}
@@ -144,7 +146,7 @@ export default function AutoApplyPage() {
               <label className="row small">Cap/day <input className="input" type="number" min={1} max={100} value={s.boards[id].cap} onChange={(e) => setBoard(id, { cap: Number(e.target.value) })} style={{ width: 90 }} /></label>
             </div>
           ))}
-          <p className="tiny muted mb-0">Same safety gates as always: 25–75 s between applications, stops on CAPTCHA, sign-in wall or limit messages, unsure answers go to Needs review, LinkedIn never.</p>
+          <p className="tiny muted mb-0">Same safety gates as always: 30–90 s between applications, one job at a time, in a minimized window, stops on CAPTCHA, sign-in wall or limit messages, unsure answers go to Needs review, LinkedIn never.</p>
         </div>
       </div>
 

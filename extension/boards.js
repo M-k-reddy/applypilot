@@ -388,5 +388,28 @@
     }
   };
 
-  g.AP_BOARDS = { BOARDS, ORDER: ["naukri", "internshala", "indeed", "shine", "hirist", "instahyre", "cutshort", "foundit", "wellfound"], APPLIED_EXACT, EXCLUDED: /(^|\.)linkedin\.com$/i };
+  // v2.10: "ATS (company sites)": public Greenhouse / Lever / Ashby job APIs (no login). Runs last; the runner reads the
+  // JSON APIs (atsCollect in boardrunner.js) and applies with the saved-jobs autofill agent in the silent window.
+  // Every slug below was checked on 2026-11-14 to return JSON with India-located openings.
+  BOARDS.ats = {
+    id: "ats", ats: true, bestEffort: true, name: "ATS (company sites)", defaultCap: 10, defaultOn: true,
+    hosts: /(^|\.)(greenhouse\.io|lever\.co|ashbyhq\.com)$/i,
+    recommended: [], loginUrl: /(?!)/, listing: {}, job: {},
+    apply: { hosts: /(^|\.)(greenhouse\.io|lever\.co|ashbyhq\.com)$/i, success: COMMON_SUCCESS },
+    rate: COMMON_RATE
+  };
+  const gh = (slug, name) => ({ ats: "greenhouse", slug, name }), lv = (slug, name) => ({ ats: "lever", slug, name }), ab = (slug, name) => ({ ats: "ashby", slug, name });
+  const ATS_COMPANIES = [
+    gh("groww", "Groww"), gh("druva", "Druva"), gh("hackerrank", "HackerRank"), gh("inmobi", "InMobi"), gh("pubmatic", "PubMatic"),
+    gh("rubrik", "Rubrik"), gh("databricks", "Databricks"), gh("mongodb", "MongoDB"), gh("okta", "Okta"), gh("toast", "Toast"),
+    gh("gitlab", "GitLab"), gh("elastic", "Elastic"), gh("twilio", "Twilio"), gh("airbnb", "Airbnb"), gh("stripe", "Stripe"),
+    gh("coinbase", "Coinbase"), gh("datadog", "Datadog"), gh("yugabyte", "Yugabyte"), gh("newrelic", "New Relic"),
+    lv("cred", "CRED"), lv("zeta", "Zeta"), lv("mindtickle", "Mindtickle"), lv("fampay", "FamPay"), lv("hevodata", "Hevo Data"),
+    lv("meesho", "Meesho"), lv("paytm", "Paytm"),
+    ab("sarvam", "Sarvam AI"), ab("atlan", "Atlan"), ab("composio", "Composio"), ab("plane", "Plane")
+  ];
+  // v2.10: stop a board on OTP / verification-code prompts (strong phrases only, so profile "verify your number" banners don't trip it).
+  const OTP = /enter (the |your )?(otp|one[- ]time (password|passcode|code))|otp (has been |was )?sent|enter (the |your )?(\d-digit )?verification code|verification code (has been |was )?sent to/i;
+
+  g.AP_BOARDS = { BOARDS, ORDER: ["naukri", "internshala", "indeed", "shine", "hirist", "instahyre", "cutshort", "foundit", "wellfound", "ats"], APPLIED_EXACT, OTP, ATS_COMPANIES, EXCLUDED: /(^|\.)linkedin\.com$/i };
 })(typeof self !== "undefined" ? self : globalThis);

@@ -15,7 +15,7 @@ chrome.runtime.onStartup.addListener(enablePanel);
 const JOB_TIMEOUT_MS = 90_000;
 const CONFIRM_MS = 15_000;
 const MAX_STEPS = 8;
-const DELAY_MIN_MS = 20_000, DELAY_MAX_MS = 60_000;
+const DELAY_MIN_MS = 30_000, DELAY_MAX_MS = 90_000; // v2.10 anti-flag pacing: 30–90 s between applications
 const DEFAULT_CAP = 20;
 const LOG_MAX = 150;
 const TICK = "ap-auto-tick", NEXT = "ap-auto-next";
@@ -120,18 +120,51 @@ const callAP = (tabId, fn, args = [], frameIds) => exec(tabId, {
   args: [fn, args]
 }, true, frameIds);
 
+// v2.10 Silent mode (default on, side panel Settings): every tab a run opens lives in ONE minimized, unfocused window,
+// reused for the whole run and closed at the end, so nothing appears in the user's own window. If the window can't be
+// created, fall back to a background tab in the current window (the old behaviour).
+async function silentEnabled() { return (await chrome.storage.local.get("silentMode")).silentMode !== false; }
+async function workTab(url = "about:blank") {
+  if (await silentEnabled()) {
+    try {
+      const { silentWin } = await chrome.storage.session.get("silentWin");
+      if (silentWin != null) {
+        try { await chrome.windows.get(silentWin); const t = await chrome.tabs.create({ windowId: silentWin, url, active: true }); return t.id; }
+        catch { await chrome.storage.session.remove("silentWin"); }
+      }
+      const w = await chrome.windows.create({ url, state: "minimized", focused: false });
+      await chrome.storage.session.set({ silentWin: w.id });
+      const tabs = w.tabs && w.tabs.length ? w.tabs : await chrome.tabs.query({ windowId: w.id });
+      if (tabs[0] && tabs[0].id != null) return tabs[0].id;
+    } catch (e) { console.warn("ApplyPilot: silent window failed, using a background tab", e); }
+  }
+  return (await chrome.tabs.create({ url, active: false })).id;
+}
+async function closeSilent() {
+  const { silentWin } = await chrome.storage.session.get("silentWin");
+  if (silentWin == null) return;
+  await chrome.storage.session.remove("silentWin");
+  try { await chrome.windows.remove(silentWin); } catch { /* already closed */ }
+}
+/** Close a work tab and the silent window (if any). */
+async function closeWork(tabId) {
+  if (tabId != null) { try { await chrome.tabs.remove(tabId); } catch { /* gone */ } }
+  await closeSilent();
+}
+chrome.windows.onRemoved.addListener((id) => { chrome.storage.session.get("silentWin").then(({ silentWin }) => { if (silentWin === id) chrome.storage.session.remove("silentWin"); }).catch(() => {}); });
+
 async function ensureTab(url) {
   const st = await getState();
   if (st.tabId != null) {
     try { await chrome.tabs.get(st.tabId); await chrome.tabs.update(st.tabId, { url }); return st.tabId; } catch { /* closed */ }
   }
-  const t = await chrome.tabs.create({ url, active: false });
-  await patch({ tabId: t.id });
-  return t.id;
+  const id = await workTab(url);
+  await patch({ tabId: id });
+  return id;
 }
 async function closeTab() {
   const st = await getState();
-  if (st.tabId != null) { try { await chrome.tabs.remove(st.tabId); } catch { /* gone */ } await patch({ tabId: null }); }
+  if (st.tabId != null) { await closeWork(st.tabId); await patch({ tabId: null }); }
 }
 /** Some forms only react when visible. Activate the tab for ~2.5s, then give focus back. Used at most once per job. */
 async function focusBriefly(ctx, tabId) {
@@ -146,10 +179,10 @@ async function focusBriefly(ctx, tabId) {
 }
 
 function merge(results) {
-  const r = { captcha: false, login: false, success: false, fields: 0, textLen: 0, url: "" };
+  const r = { captcha: false, login: false, success: false, otp: false, unusual: false, fields: 0, textLen: 0, url: "" };
   for (const f of results || []) {
     const x = f.result; if (!x) continue;
-    r.captcha ||= x.captcha; r.success ||= x.success; r.fields += x.fields; r.textLen += x.textLen;
+    r.captcha ||= x.captcha; r.success ||= x.success; r.otp ||= !!x.otp; r.unusual ||= !!x.unusual; r.fields += x.fields; r.textLen += x.textLen;
     if (x.top) { r.url = x.url; r.login = x.login; } // login wall judged on the top frame only
   }
   return r;
@@ -166,7 +199,10 @@ async function doJob(app, ctx) {
   if (!(await chrome.permissions.contains({ origins: [`${origin}/*`] })))
     return { outcome: "left", reason: `No site access for ${hostOf(app.url)}. In the Auto tab, allow all sites.` };
 
-  const tabId = await ensureTab(app.url);
+  // v2.10: the ATS board runner passes its own (silent) tab in ctx.useTab.
+  let tabId;
+  if (ctx.useTab != null) { tabId = ctx.useTab; await chrome.tabs.update(tabId, { url: app.url }); }
+  else tabId = await ensureTab(app.url);
   ctx.tabId = tabId;
   await waitLoad(ctx, tabId);
   await wait(ctx, 1500);
@@ -180,7 +216,9 @@ async function doJob(app, ctx) {
     let insp = merge(await callAP(tabId, "inspect"));
     if (ctx.clicked && insp.success) return { outcome: "applied", reason: "Confirmation shown" };
     if (ctx.entryPending && insp.fields) { ctx.entryPending = false; ctx.submitClicked = false; await patchCurrent({ step: "working" }); } // it only opened the form
-    if (insp.captcha) return { outcome: "review", reason: "CAPTCHA on the page." };
+    if (insp.captcha) return { outcome: "review", halt: true, reason: "CAPTCHA on the page." };
+    if (insp.otp) return { outcome: "review", halt: true, reason: "The site asked for an OTP / verification code." };
+    if (insp.unusual) return { outcome: "review", halt: true, reason: "The site showed an unusual-activity / limit message." };
     if (insp.login) return { outcome: "review", reason: "Sign-in or account required." };
 
     // No form yet: an "Apply" link/button may open it.
@@ -201,7 +239,7 @@ async function doJob(app, ctx) {
         } else {
           // A bare "Apply" button with no form can be a one-click apply on some boards: treat it as a submit.
           // All gates hold here: no fields to fill, no ask_user, no CAPTCHA or sign-in wall.
-          await patchCurrent({ step: "submitting" });
+          await patchCurrent({ step: "submitting" }); if (ctx.onStep) await ctx.onStep("submitting");
           ctx.submitClicked = true; ctx.entryPending = true;
           await callAP(tabId, "act", ["entry"], [hit.frameId]);
         }
@@ -219,18 +257,19 @@ async function doJob(app, ctx) {
     const byId = new Map(fields.map((f) => [f.id, f]));
     if (fields.length) {
       guard(ctx);
+      if (ctx.beforeAgent) { await ctx.beforeAgent(); guard(ctx); }
       const res = await api("/api/agent", { body: { url, pageTitle: title, fields: fields.slice(0, 150), jobId: app.job_id || null, applicationId: app.id } });
       guard(ctx);
       const applied = await callAP(tabId, "apply", [res.actions || []]);
       const asks = applied.flatMap((r) => (r.result && r.result.asks) || []);
-      if (asks.length) return { outcome: "review", reason: `Needs your answer: ${list(asks.map((a) => `${(byId.get(a.id) || {}).label || "field"} (${a.reason || "needs you"})`))}` };
+      if (asks.length) return { outcome: "review", asks: asks.map((a) => (byId.get(a.id) || {}).label).filter(Boolean), reason: `Needs your answer: ${list(asks.map((a) => `${(byId.get(a.id) || {}).label || "field"} (${a.reason || "needs you"})`))}` };
       await wait(ctx, 900);
     }
 
     const audit = await callAP(tabId, "audit");
     const missing = audit.flatMap((r) => (r.result && r.result.missing) || []);
     const invalid = audit.flatMap((r) => (r.result && r.result.invalid) || []);
-    if (missing.length) return { outcome: "review", reason: `Required fields still empty: ${list(missing)}` };
+    if (missing.length) return { outcome: "review", asks: missing, reason: `Required fields still empty: ${list(missing)}` };
     if (invalid.length) return { outcome: "review", reason: `Site flagged fields as invalid: ${list(invalid)}` };
 
     // Which button is next? Prefer the frame that holds the form.
@@ -257,12 +296,13 @@ async function doJob(app, ctx) {
 
     // ── Final gate, re-checked right before clicking Submit.
     insp = merge(await callAP(tabId, "inspect"));
-    if (insp.captcha) return { outcome: "review", reason: "CAPTCHA on the page." };
+    if (insp.captcha) return { outcome: "review", halt: true, reason: "CAPTCHA on the page." };
+    if (insp.otp) return { outcome: "review", halt: true, reason: "The site asked for an OTP / verification code." };
     if (insp.login) return { outcome: "review", reason: "Sign-in or account required." };
     if (ctx.deadline - Date.now() < CONFIRM_MS + 2000) return { outcome: "review", reason: "Ran out of time before Submit (90s limit). Everything was filled; check and submit yourself." };
     guard(ctx);
     const before = { url: noHash((await chrome.tabs.get(tabId)).url), success: insp.success };
-    await patchCurrent({ step: "submitting" });
+    await patchCurrent({ step: "submitting" }); if (ctx.onStep) await ctx.onStep("submitting");
     ctx.submitClicked = true; ctx.clicked = true;
     await callAP(tabId, "act", ["submit"], [pick.frameId]);
     return confirmSubmit(ctx, tabId, before);
@@ -478,6 +518,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   // v2.4: refresh website settings / lightweight sign-in check for the side panel.
   if (msg.type === "board:settings") { fetchAutoSettings().then((settings) => sendResponse({ ok: true, settings })).catch(fail); return true; }
   if (msg.type === "board:check") { bLightCheck().then((list) => sendResponse({ ok: true, list })).catch(fail); return true; }
+  // v2.10 portal side panel: list + filter the job cards on the active board tab; Apply one job silently.
+  if (msg.type === "portal:list") { portalList(msg.tabId, msg.board).then(sendResponse).catch(fail); return true; }
+  if (msg.type === "portal:apply") { portalApply(msg.board, msg.job).then(sendResponse).catch(fail); return true; }
 });
 chrome.alarms.onAlarm.addListener((a) => { if (a.name === TICK || a.name === NEXT) kick(); });
 chrome.storage.onChanged.addListener((c, area) => {

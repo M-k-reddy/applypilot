@@ -1,5 +1,5 @@
 // Zero-click auto-apply settings (v2.4). Stored in profiles.auto_settings (jsonb); board login status in profiles.board_status.
-export const AUTO_BOARDS = ["naukri", "internshala", "indeed", "shine", "hirist", "instahyre", "cutshort", "foundit", "wellfound"] as const;
+export const AUTO_BOARDS = ["naukri", "internshala", "indeed", "shine", "hirist", "instahyre", "cutshort", "foundit", "wellfound", "ats"] as const;
 export type BoardId = (typeof AUTO_BOARDS)[number];
 export type AutoSettings = {
   enabled: boolean;              // scheduled daily run on/off (Run now works either way)
@@ -14,7 +14,7 @@ export type AutoSettings = {
 export type BoardStatus = Record<string, { connected: boolean | null; checked_at: string }>;
 
 const DEF_BOARDS: AutoSettings["boards"] = { naukri: { on: true, cap: 25 }, internshala: { on: true, cap: 25 }, indeed: { on: true, cap: 15 },
-  shine: { on: true, cap: 10 }, hirist: { on: true, cap: 10 }, instahyre: { on: true, cap: 10 }, cutshort: { on: true, cap: 10 }, foundit: { on: false, cap: 15 }, wellfound: { on: true, cap: 10 } };
+  shine: { on: true, cap: 10 }, hirist: { on: true, cap: 10 }, instahyre: { on: true, cap: 10 }, cutshort: { on: true, cap: 10 }, foundit: { on: false, cap: 15 }, wellfound: { on: true, cap: 10 }, ats: { on: true, cap: 10 } };
 /** Clean a short list of keywords: trimmed, lower-cased, deduped, max 10 × 60 chars. */
 export function cleanList(v: unknown): string[] {
   const arr = Array.isArray(v) ? v : typeof v === "string" ? v.split(",") : [];

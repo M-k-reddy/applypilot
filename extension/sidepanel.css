@@ -120,3 +120,16 @@ input:focus, textarea:focus { outline: none; border-color: var(--brand); box-sha
 .linklist { list-style: none; padding: 0; margin: 16px 0 0; display: grid; gap: 8px; }
 .advanced { margin-top: 16px; border-top: 1px solid var(--border); padding-top: 8px; }
 .advanced summary { cursor: pointer; color: var(--muted); }
+
+/* v2.10 portal list + silent toggle */
+.silent-row { flex-wrap: nowrap; align-items: flex-start; margin: 8px 0; }
+.plist { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 8px; max-height: 420px; overflow: auto; }
+.prow { border: 1px solid var(--border); border-radius: 8px; padding: 8px; display: flex; flex-direction: column; gap: 4px; }
+.prow .pt { font-weight: 700; font-size: 13px; overflow-wrap: anywhere; }
+.prow .pm { font-size: 12px; color: var(--muted); overflow-wrap: anywhere; }
+.prow .pa { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+.prow .fit { font-size: 12px; font-weight: 700; padding: 0 8px; border-radius: 99px; border: 1px solid var(--border); }
+.prow .fit.hi { color: var(--ok); border-color: var(--ok); }
+.prow .fit.mid { color: var(--warn); border-color: var(--warn); }
+.prow .pr { font-size: 12px; overflow-wrap: anywhere; }
+.prow .pr.ok { color: var(--ok); } .prow .pr.warn { color: var(--warn); } .prow .pr.bad { color: var(--bad); }
