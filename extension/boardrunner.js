@@ -377,6 +377,10 @@ async function bApplyJob(ctx, tabId, board, job, profile, opts) {
   guard(ctx);
 
   // Click Apply. A new tab opened by the board is pulled back into the runner tab (one tab at a time).
+  // v2.10.4: Indeed Apply opens its form in a pop-up; Chrome blocks script-clicked pop-ups, so allow them on Indeed.
+  if (board.followApply && chrome.contentSettings && chrome.contentSettings.popups) {
+    try { await chrome.contentSettings.popups.set({ primaryPattern: "https://in.indeed.com/*", setting: "allow" }); } catch { /* ignore */ }
+  }
   const before = new Set((await chrome.tabs.query({})).map((t) => t.id));
   const click = await bCall(tabId, "clickApply", [board.id, loose]);
   if (!click || !click.clicked) return { outcome: "skip", reason: "Apply button disappeared." };
@@ -415,6 +419,11 @@ async function bApplyJob(ctx, tabId, board, job, profile, opts) {
   }
   const cur = await chrome.tabs.get(tabId);
   const ch = hostOf(cur.url);
+  // v2.10.4: still on the same job page = the form never opened. Never count that as applied.
+  if (board.followApply && !spawned.length && noHash(cur.url || "") === noHash(info.url || "")) {
+    if (click.href && board.apply.hosts.test(hostOf(click.href)) && hostOf(click.href) !== fromHost) await bGo(ctx, tabId, click.href, board);
+    else return { outcome: "review", reason: "Clicked Apply now but Indeed's application form did not open; nothing was submitted." };
+  }
   if (!board.hosts.test(ch) && !board.apply.hosts.test(ch)) {
     if (BCFG.EXCLUDED.test(ch)) throw new BoardStop("Redirected to LinkedIn. Stopped.");
     return GH_LEVER.test(ch) ? { outcome: "queue", reason: `Apply went to ${ch}`, href: cur.url } : { outcome: "skip", reason: `Apply went to an external site (${ch}); skipped.`, leftBoard: true };
@@ -428,9 +437,11 @@ async function bFormLoop(ctx, tabId, board, job, profile, info) {
     guard(ctx);
     if (Date.now() > ctx.deadline) return { outcome: "review", reason: ctx.submitClicked ? "Time limit hit right after Submit. Check whether it went through." : "Time limit (150s) hit before Submit; nothing was submitted." };
     const s = await bCheck(ctx, tabId, board, "application");
-    if (s.success) return { outcome: "applied", reason: "Board confirmed the application." };
+    // v2.10.4: on Indeed the job page and other cards say "Applied" for old applications; only trust it after Submit.
+    const trust = !board.followApply || ctx.submitClicked;
+    if (s.success && trust) return { outcome: "applied", reason: "Board confirmed the application." };
     const ji = await bCall(tabId, "jobInfo", [board.id]);
-    if (ji && ji.applied && (ctx.clicked || chatAnswered)) return { outcome: "applied", reason: "Button changed to Applied." };
+    if (trust && ji && ji.applied && (ctx.clicked || chatAnswered)) return { outcome: "applied", reason: "Button changed to Applied." };
 
     const qs = (await bCall(tabId, "questions", [board.id])) || { mode: "none", questions: [] };
     const st = await bCall(tabId, "step", [board.id, "find"]);
