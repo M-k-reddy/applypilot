@@ -138,14 +138,14 @@
         company: ["[data-testid='inlineHeader-companyName']", "[data-company-name='true']"],
         description: ["#jobDescriptionText"],
         applied: ["[data-testid='applied-label']", ".jobsearch-AppliedBadge"],
-        applySel: ["#indeedApplyButton", "button[id*='indeedApplyButton']", "[data-testid*='indeedApply'] button", "button[data-testid*='indeedApply']", "#jobsearch-ViewJobButtons-container button", ".jobsearch-IndeedApplyButton-newDesign", "[class*='IndeedApplyButton'] button", ".ia-IndeedApplyButton"],
-        applyText: /^(apply now|easily apply)$/i,
-        applyRequiresSel: ["#indeedApplyButton", "[id*='indeedApply']", "[data-testid*='indeedApply']", "[class*='IndeedApply']", ".ia-IndeedApplyButton", "[data-indeed-apply-jobid]"],
+        applySel: ["#indeedApplyButton", "[data-testid='indeed-apply-button']", "[data-testid*='apply-button' i]", ".indeed-apply-button", "[class*='indeed-apply' i] button", "#applyButtonLinkContainer button", "button[aria-label^='Apply now' i]", "button[id*='indeedApplyButton']", "[data-testid*='indeedApply'] button", "button[data-testid*='indeedApply']", "#jobsearch-ViewJobButtons-container button", ".jobsearch-IndeedApplyButton-newDesign", "[class*='IndeedApplyButton'] button", ".ia-IndeedApplyButton"],
+        applyText: /^(apply now|easily apply|apply now \(opens in a new tab\))$/i,
+        applyRequiresSel: ["#indeedApplyButton", "[data-testid='indeed-apply-button']", "[class*='indeed-apply' i]", "[id*='indeedApply']", "[data-testid*='indeedApply']", "[class*='IndeedApply']", ".ia-IndeedApplyButton", "[data-indeed-apply-jobid]"],
         externalSel: ["#applyButtonLinkContainer a", "[data-testid='applyButton-externalLink']"],
         externalText: /apply on company (site|website)|company site/i,
         // v2.10.1: Indeed's current design: a plain "Apply now" in the view-job buttons area is Indeed Apply unless an
         // external marker sits in that same area.
-        buttonsArea: ["#jobsearch-ViewJobButtons-container", "[class*='ViewJobButtons']", "[data-testid*='ViewJobButtons']", "#viewJobButtonLinkContainer", ".jobsearch-IndeedApplyButton-contentWrapper"],
+        buttonsArea: ["#jobsearch-ViewJobButtons-container", "#applyButtonLinkContainer", "[data-testid='jobsearch-ViewJobButtons-container']", "[class*='ViewJobButtons']", "[data-testid*='ViewJobButtons']", "#viewJobButtonLinkContainer", ".jobsearch-IndeedApplyButton-contentWrapper"],
         areaApplyText: /^(apply now|easily apply|apply)$/i,
         ownHosts: /(^|\.)indeed\.com$/i,
         redirectPath: /\/(applystart|rc\/clk|pagead\/clk)/i

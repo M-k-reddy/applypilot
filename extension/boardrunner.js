@@ -179,7 +179,7 @@ function bShort(res) {
   const r = String(res.reason || "");
   if (/company site|external site|Apply (link goes|opened|went) to/i.test(r)) return "company site";
   if (/expired or closed/i.test(r)) return "expired";
-  if (/No on-board Apply/i.test(r)) return "no Easily apply";
+  if (/No on-board Apply/i.test(r)) { const m = r.match(/page shows:? (.*)\.$/i); return `no Easily apply${m ? `; ${m[1]}` : ""}`; }
   if (/Already applied/i.test(r)) return "already applied";
   if (/^Match \d+%/i.test(r)) return "low match";
   if (/senior role/i.test(r)) return "senior role";
@@ -343,7 +343,18 @@ async function bApplyJob(ctx, tabId, board, job, profile, opts) {
     if (info.href && GH_LEVER.test(h)) return { outcome: "queue", reason: `Apply link goes to ${h}`, href: info.href };
     return { outcome: "skip", reason: `Apply happens on the company site${h ? ` (${h})` : ""}; skipped.` };
   }
-  if (info.kind !== "onboard") return { outcome: "skip", reason: info.expired ? "Job expired or closed." : "No on-board Apply button (closed, expired or external)." };
+  // v2.10.2: Apply buttons render late (Indeed loads them by script); wait up to ~9 s before deciding there is none.
+  for (let i = 0; i < 6 && info && info.kind === "none" && !info.expired && !info.applied; i++) {
+    await new Promise((r) => setTimeout(r, 1500));
+    info = (await bCall(tabId, "jobInfo", [board.id])) || info;
+  }
+  if (info.applied) return { outcome: "skip", reason: "Already applied (board says Applied)." };
+  if (info.kind === "external") {
+    const h = hostOf(info.href || "");
+    if (info.href && GH_LEVER.test(h)) return { outcome: "queue", reason: `Apply link goes to ${h}`, href: info.href };
+    return { outcome: "skip", reason: `Apply happens on the company site${h ? ` (${h})` : ""}; skipped.` };
+  }
+  if (info.kind !== "onboard") return { outcome: "skip", reason: info.expired ? "Job expired or closed." : `No on-board Apply button (closed, expired or external)${info.seen && info.seen.length ? `; page shows: ${info.seen.join(" | ")}` : "; page shows no Apply button"}.` };
 
   // v2.6: agent checks. Read the job like a person would before applying: seniority, years asked, then fit vs your resume.
   const verdict = bJudge(info, job, profile, opts.minLpa || 0);
@@ -725,7 +736,7 @@ async function boardLoop() {
           await log("info", skipLine(board, job, res));
         }
         // v2.10.1: N skips in a row for the same reason (Indeed: 5) → stop this board for the run instead of looping.
-        if (res.outcome === "skip") { const r = bShort(res); streak = r === streakReason ? streak + 1 : 1; streakReason = r; }
+        if (res.outcome === "skip") { const r = bShort(res).split(";")[0]; streak = r === streakReason ? streak + 1 : 1; streakReason = r; }
         else { streak = 0; streakReason = ""; }
         if (board.skipStreakStop && streak >= board.skipStreakStop && !stopMsg && !haltMsg)
           haltMsg = `${board.name}: stopped for this run: ${streak} jobs in a row skipped (${streakReason}).`;

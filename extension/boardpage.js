@@ -201,7 +201,9 @@
       href = a && a.getAttribute("href") ? abs(a.getAttribute("href")) : (ext.getAttribute("data-href") || ext.getAttribute("href") || "");
     }
     const expired = kind === "none" && /this job has expired|no longer accepting applications|job (is|has been) (closed|removed)|job not found|this job is no longer available/i.test(bodyText(8000));
-    return { title, company, description, pageTop, applied, kind, href, label, expired, url: location.href };
+    // v2.10.2: what apply-like buttons the page really has, so a skip line shows why nothing matched.
+    const seen = kind === "none" ? clickables().filter(vis).map((b) => btnLabel(b)).filter((l) => l && l.length < 40 && /apply/i.test(l)).slice(0, 3) : [];
+    return { title, company, description, pageTop, applied, kind, href, label, expired, seen, url: location.href };
   }
   function clickApply(id) {
     const c = cfg(id); if (!c) return { clicked: false };
