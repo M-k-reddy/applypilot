@@ -348,6 +348,13 @@ async function bApplyJob(ctx, tabId, board, job, profile, opts) {
     await new Promise((r) => setTimeout(r, 1500));
     info = (await bCall(tabId, "jobInfo", [board.id])) || info;
   }
+  // v2.10.3: Indeed's "Apply now" often has no Indeed Apply marker on the page. When the card said Easily apply
+  // (search runs with that filter), trust a plain "Apply now"; after the click we still skip if it leaves Indeed.
+  let loose = false;
+  if (info.kind === "none" && board.followApply && (info.seen || []).some((l) => board.job.applyText.test(l))) {
+    const li = await bCall(tabId, "jobInfo", [board.id, true]);
+    if (li && li.kind === "onboard") { info = li; loose = true; }
+  }
   if (info.applied) return { outcome: "skip", reason: "Already applied (board says Applied)." };
   if (info.kind === "external") {
     const h = hostOf(info.href || "");
@@ -371,7 +378,7 @@ async function bApplyJob(ctx, tabId, board, job, profile, opts) {
 
   // Click Apply. A new tab opened by the board is pulled back into the runner tab (one tab at a time).
   const before = new Set((await chrome.tabs.query({})).map((t) => t.id));
-  const click = await bCall(tabId, "clickApply", [board.id]);
+  const click = await bCall(tabId, "clickApply", [board.id, loose]);
   if (!click || !click.clicked) return { outcome: "skip", reason: "Apply button disappeared." };
   ctx.clicked = true;
   await bSettle(ctx, tabId, 2000);

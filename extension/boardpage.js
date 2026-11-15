@@ -159,8 +159,14 @@
       .sort((a, b) => rank(a) - rank(b))[0] || null;
     return { on, ext };
   }
-  function applyButtons(c) {
+  function applyButtons(c, loose) {
     const J = c.job;
+    // v2.10.3: loose = the job card already showed "Easily apply", so a plain "Apply now" on the page is trusted.
+    // The runner still checks where the click lands and skips if it leaves the board.
+    if (loose) {
+      const b = clickables().filter((x) => vis(x) && !disabled(x)).find((x) => J.applyText.test(btnLabel(x)) && !(J.externalText && J.externalText.test(`${btnLabel(x)} ${x.getAttribute("aria-label") || ""}`)));
+      if (b) return { on: b, ext: null };
+    }
     if (J.buttonsArea) {
       const ab = areaButtons(J);
       if (ab) {
@@ -180,7 +186,7 @@
     }
     return { on, ext };
   }
-  function jobInfo(id) {
+  function jobInfo(id, loose) {
     const c = cfg(id); if (!c) return null;
     const J = c.job;
     const title = txt(q1(J.title), 200), company = txt(q1(J.company), 160);
@@ -192,7 +198,7 @@
       || (b.tagName === "A" && /^(https?:|\/)/i.test(b.getAttribute("href") || ""));
     const appliedBtn = clickables().some((b) => APPLIED_EXACT.test(btnLabel(b)) && !navLike(b));
     const applied = !!q1(J.applied) || appliedBtn;
-    const { on, ext } = applyButtons(c);
+    const { on, ext } = applyButtons(c, loose);
     let kind = "none", href = "", label = "";
     if (on) { kind = "onboard"; label = btnLabel(on); }
     else if (ext) {
@@ -205,9 +211,9 @@
     const seen = kind === "none" ? clickables().filter(vis).map((b) => btnLabel(b)).filter((l) => l && l.length < 40 && /apply/i.test(l)).slice(0, 3) : [];
     return { title, company, description, pageTop, applied, kind, href, label, expired, seen, url: location.href };
   }
-  function clickApply(id) {
+  function clickApply(id, loose) {
     const c = cfg(id); if (!c) return { clicked: false };
-    const { on } = applyButtons(c); if (!on) return { clicked: false };
+    const { on } = applyButtons(c, loose); if (!on) return { clicked: false };
     const a = on.tagName === "A" ? on : on.closest("a");
     const href = a && a.getAttribute("href") && !/^(#|javascript:)/i.test(a.getAttribute("href")) ? abs(a.getAttribute("href")) : "";
     on.scrollIntoView({ block: "center" }); on.click();
