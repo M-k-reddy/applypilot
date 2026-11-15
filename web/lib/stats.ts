@@ -17,7 +17,7 @@ export function siteOf(a: { board?: string | null; page_url?: string | null }): 
   try { return a.page_url ? new URL(a.page_url).hostname.replace(/^www\./, "") : ""; } catch { return ""; }
 }
 
-export const BOARD_TABS = ["naukri", "internshala", "indeed", "shine", "hirist", "instahyre", "cutshort", "foundit", "wellfound", "ats"];
+export const BOARD_TABS = ["naukri", "internshala", "shine", "hirist", "instahyre", "cutshort", "foundit", "wellfound", "ats"];
 export const boardLabel = (b: string) => BOARD_NAMES[b] || (b === "others" ? "Others" : b);
 export const initials = (s: string) => (s || "?").replace(/[^A-Za-z0-9 ]/g, " ").trim().split(/\s+/).slice(0, 2).map((w) => w[0]).join("").toUpperCase() || "?";
 export const istTime = (d: string | null) => d ? new Date(d).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }) : "";

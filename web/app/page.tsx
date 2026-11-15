@@ -7,7 +7,7 @@ const FEATURES = [
   { ico: "◎", t: "Live ATS keyword score", d: "A deterministic keyword-coverage score updates instantly as you accept changes, with matched and missing keyword chips." },
   { ico: "✓", t: "Honesty check built in", d: "Rewrites that invent numbers are dropped automatically, and new skills you never listed are flagged in orange." },
   { ico: "✎", t: "Cover letters in seconds", d: "Under 200 words, built only from your real projects. Edit inline, copy, or download as .txt." },
-  { ico: "⚡", t: "Safe autofill", d: "Fills forms on LinkedIn, Naukri, Internshala, Greenhouse, Lever and Workday. Salary and sensitive questions stay with you. In Review mode you click Submit; optional Auto mode submits only fully confident applications." },
+  { ico: "⚡", t: "Safe autofill", d: "Fills forms on Naukri, Internshala, Greenhouse, Lever and Workday. Salary and sensitive questions stay with you. In Review mode you click Submit; optional Auto mode submits only fully confident applications." },
   { ico: "★", t: "An answer bank that learns", d: "Answer a new question once and ApplyPilot remembers it for the next application." },
   { ico: "⌕", t: "Fresher-first job search", d: "Search Indian and remote jobs from free sources, filtered for freshers, interns, remote and city." },
   { ico: "?", t: "Interview prep", d: "8 likely questions per job, with answer pointers drawn from your own projects and skills." },
@@ -31,7 +31,7 @@ const FAQ = [
   ["Is ApplyPilot really free?", "Yes. The free plan resets on the 1st of every month (IST) and covers 30 fit analyses, 15 resume tailors, 10 cover letters and 50 autofills. Job search, the ATS score and the tracker are always unlimited."],
   ["Will the AI make things up on my resume?", "It is told to use only facts from your profile, and every rewrite is checked: suggestions that add numbers you never wrote are dropped, and new skills are flagged so you can reject them. You approve every change."],
   ["Does it submit applications automatically?", "Only if you turn on Auto mode, which is off by default. In Review mode the extension fills what it can, outlines the Next or Submit button in blue, and you click it yourself. Auto mode works through jobs you saved, one at a time with a daily cap, and clicks Submit only when every required field is filled, nothing needs your answer (salary, personal or unknown questions) and there is no CAPTCHA or sign-in. Anything else goes to a Needs review column. LinkedIn is never automated."],
-  ["Which sites does the extension support?", "Any job page with standard job data, plus dedicated support for LinkedIn, Naukri, Internshala, Indeed, Greenhouse, Lever and Workday. It only runs when you click it."],
+  ["Which sites does the extension support?", "Any job page with standard job data, plus dedicated support for Naukri, Internshala, Greenhouse, Lever and Workday. It only runs when you click it."],
   ["Is the ATS score the same as a company's ATS?", "No tool can see inside a company's ATS. Our score measures how many of the job description's important keywords appear in your resume, which is what keyword filters look for."],
   ["What happens to my data?", "Your resume and answers live in your own account and are used only to tailor and fill your applications. You can edit or delete them anytime."]
 ];

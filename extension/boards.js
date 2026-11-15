@@ -424,5 +424,5 @@
   // v2.10: stop a board on OTP / verification-code prompts (strong phrases only, so profile "verify your number" banners don't trip it).
   const OTP = /enter (the |your )?(otp|one[- ]time (password|passcode|code))|otp (has been |was )?sent|enter (the |your )?(\d-digit )?verification code|verification code (has been |was )?sent to/i;
 
-  g.AP_BOARDS = { BOARDS, ORDER: ["naukri", "internshala", "indeed", "shine", "hirist", "instahyre", "cutshort", "foundit", "wellfound", "ats"], APPLIED_EXACT, OTP, ATS_COMPANIES, EXCLUDED: /(^|\.)linkedin\.com$/i };
+  g.AP_BOARDS = { BOARDS, ORDER: ["naukri", "internshala", "shine", "hirist", "instahyre", "cutshort", "foundit", "wellfound", "ats"], APPLIED_EXACT, OTP, ATS_COMPANIES, EXCLUDED: /(^|\.)linkedin\.com$/i };
 })(typeof self !== "undefined" ? self : globalThis);

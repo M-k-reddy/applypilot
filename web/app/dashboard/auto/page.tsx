@@ -14,15 +14,13 @@ type Data = { settings: Settings; board_status: Status; today: { applied: number
 const BOARDS: { id: BoardId | "linkedin"; name: string; login: string }[] = [
   { id: "naukri", name: "Naukri", login: "https://www.naukri.com/nlogin/login" },
   { id: "internshala", name: "Internshala", login: "https://internshala.com/login/user" },
-  { id: "indeed", name: "Indeed India", login: "https://secure.indeed.com/auth?hl=en_IN&co=IN" },
   { id: "shine", name: "Shine", login: "https://www.shine.com/myshine/login" },
   { id: "hirist", name: "Hirist", login: "https://www.hirist.tech/login" },
   { id: "instahyre", name: "Instahyre", login: "https://www.instahyre.com/login/" },
   { id: "cutshort", name: "Cutshort", login: "https://cutshort.io/login" },
   { id: "foundit", name: "Foundit", login: "https://www.foundit.in/rio/login" },
   { id: "wellfound", name: "Wellfound", login: "https://wellfound.com/login" },
-  { id: "ats", name: "ATS (company sites)", login: "" },
-  { id: "linkedin", name: "LinkedIn", login: "" }
+  { id: "ats", name: "ATS (company sites)", login: "" }
 ];
 const fmt = (d: string) => (d ? new Date(d).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", dateStyle: "medium", timeStyle: "short" }) : "");
 
@@ -78,7 +76,7 @@ export default function AutoApplyPage() {
   if (!d || !s) return <><PageHead title="Auto-apply" /><div className="skeleton" style={{ height: 200 }} /></>;
   return (
     <>
-      <PageHead title="Auto-apply" sub="Zero-click: once a day the extension applies to the jobs Naukri, Internshala, Indeed and Foundit recommend for you, inside your signed-in Chrome. Chrome just needs to be open." />
+      <PageHead title="Auto-apply" sub="Zero-click: once a day the extension applies to the jobs Naukri, Internshala and the other boards recommend for you, inside your signed-in Chrome. Chrome just needs to be open." />
       <div className="grid grid-2">
         <div className="card"><div className="card-head"><h3>Applied today</h3></div><div style={{ fontSize: "2rem", fontWeight: 800 }}>{d.today.applied}</div></div>
         <div className="card"><div className="card-head"><h3>Needs review today</h3><Link className="btn btn-sm" href="/dashboard/tracker">Open tracker</Link></div><div style={{ fontSize: "2rem", fontWeight: 800 }}>{d.today.needs_review}</div></div>

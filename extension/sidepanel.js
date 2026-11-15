@@ -19,7 +19,6 @@ const NEED_ACCESS = "NEED_ACCESS";
 const BOARDS = [
   { id: "naukri", name: "Naukri", login: "https://www.naukri.com/nlogin/login" },
   { id: "internshala", name: "Internshala", login: "https://internshala.com/login/user" },
-  { id: "indeed", name: "Indeed", login: "https://secure.indeed.com/auth?hl=en_IN&co=IN" },
   { id: "shine", name: "Shine", login: "https://www.shine.com/myshine/login" },
   { id: "hirist", name: "Hirist", login: "https://www.hirist.tech/login" },
   { id: "instahyre", name: "Instahyre", login: "https://www.instahyre.com/login/" },
@@ -27,7 +26,7 @@ const BOARDS = [
   { id: "foundit", name: "Foundit", login: "https://www.foundit.in/rio/login" },
   { id: "wellfound", name: "Wellfound", login: "https://wellfound.com/login" }
 ];
-const BOARD_DEFAULT_ON = { naukri: true, internshala: true, indeed: true, shine: true, hirist: true, instahyre: true, cutshort: true, foundit: false, wellfound: true };
+const BOARD_DEFAULT_ON = { naukri: true, internshala: true, shine: true, hirist: true, instahyre: true, cutshort: true, foundit: false, wellfound: true };
 
 let settings = { api: "", key: "", site: DEFAULT_SITE };
 let current = { tabId: null, job: null, jobId: null, applicationId: null, pageBase: "", fields: new Map(), asks: [], saved: false };
